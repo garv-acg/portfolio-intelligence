@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import os
+import smtplib
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from email.mime.text import MIMEText
 from pathlib import Path
 
+from dotenv import load_dotenv
 
-LOG_DIR = Path("logs")
+PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(PROJECT_ROOT / ".env")
+
+LOG_DIR  = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "overnight_runs.log"
 
 
@@ -21,47 +28,70 @@ def write_log(message: str) -> None:
 
 
 def run_step(name: str, command: list[str]) -> tuple[bool, str]:
-    write_log(f"START | {name} | {' '.join(command)}")
-
+    write_log(f"START | {name}")
     result = subprocess.run(
         command,
-        cwd=Path.cwd(),
+        cwd=str(PROJECT_ROOT),
         capture_output=True,
         text=True,
         check=False,
     )
-
-    output = ""
-    if result.stdout:
-        output += result.stdout
-    if result.stderr:
-        output += "\n" + result.stderr
-
+    output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
     if result.returncode == 0:
         write_log(f"SUCCESS | {name}")
     else:
-        write_log(f"FAIL | {name} | return_code={result.returncode}")
-
+        write_log(f"FAIL | {name} | exit={result.returncode}")
     if output.strip():
         write_log(f"OUTPUT | {name}\n{output.strip()}")
+    return result.returncode == 0, output.strip()
 
-    return result.returncode == 0, output
+
+def send_failure_alert(failed_step: str, output: str) -> None:
+    gmail_user = os.getenv("GMAIL_USER", "").strip()
+    gmail_pw   = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    notify_to  = os.getenv("NEWSLETTER_TO", gmail_user).strip()
+
+    if not gmail_user or not gmail_pw:
+        write_log("ALERT | Cannot send failure email — GMAIL_USER/GMAIL_APP_PASSWORD not set")
+        return
+
+    today = date.today().strftime("%B %d, %Y")
+    body = (
+        f"Newsletter automation failed on {today}.\n\n"
+        f"Failed step: {failed_step}\n\n"
+        f"Output:\n{output[:2000] if output else '(no output)'}\n\n"
+        f"Check logs at: {LOG_FILE}\n"
+    )
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = f"⚠ Newsletter Failed — {today}"
+    msg["From"]    = gmail_user
+    msg["To"]      = notify_to
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+            server.login(gmail_user, gmail_pw)
+            server.sendmail(gmail_user, notify_to, msg.as_string())
+        write_log(f"ALERT | Failure notification sent to {notify_to}")
+    except Exception as exc:
+        write_log(f"ALERT | Could not send failure notification: {exc}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Overnight automation runner for the newsletter platform.")
-    parser.add_argument("--skip-email", action="store_true", help="Generate newsletter but do not send email.")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would run without executing.")
+    parser = argparse.ArgumentParser(description="Overnight newsletter runner.")
+    parser.add_argument("--skip-email", action="store_true", help="Generate but do not send.")
+    parser.add_argument("--dry-run",    action="store_true", help="Show steps without running.")
     args = parser.parse_args()
 
-    write_log("OVERNIGHT WORKFLOW STARTED")
+    python = sys.executable
 
     steps = [
-        ("Generate newsletter, history, factors, and alerts", [sys.executable, "generate_hybrid_newsletter.py"]),
+        ("Generate newsletter", [python, str(PROJECT_ROOT / "generate_hybrid_newsletter.py")]),
     ]
-
     if not args.skip_email:
-        steps.append(("Send newsletter email", [sys.executable, "send_newsletter.py"]))
+        # Use app/send_newsletter.py — reads creds from .env, proper error handling
+        steps.append(("Send newsletter email", [python, str(PROJECT_ROOT / "app" / "send_newsletter.py")]))
+
+    write_log("OVERNIGHT WORKFLOW STARTED")
 
     if args.dry_run:
         for name, command in steps:
@@ -69,19 +99,15 @@ def main() -> None:
         write_log("OVERNIGHT WORKFLOW DRY RUN COMPLETE")
         return
 
-    all_good = True
-
     for name, command in steps:
-        ok, _ = run_step(name, command)
+        ok, output = run_step(name, command)
         if not ok:
-            all_good = False
-            break
+            write_log("OVERNIGHT WORKFLOW FAILED")
+            if not args.skip_email:
+                send_failure_alert(name, output)
+            raise SystemExit(1)
 
-    if all_good:
-        write_log("OVERNIGHT WORKFLOW COMPLETE")
-    else:
-        write_log("OVERNIGHT WORKFLOW FAILED")
-        raise SystemExit(1)
+    write_log("OVERNIGHT WORKFLOW COMPLETE")
 
 
 if __name__ == "__main__":
