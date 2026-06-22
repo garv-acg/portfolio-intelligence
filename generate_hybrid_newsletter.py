@@ -793,54 +793,78 @@ def build_position_notes(
 
 _CSS = """
 <style>
-  body { margin:0; padding:0; background:#f1f5f9; color:#0f172a;
+  body { margin:0; padding:0; background:#0f1520; color:#0f172a;
          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
   .container { max-width:980px; margin:0 auto; padding:28px; }
-  .header { padding:34px; border-radius:24px;
-            background:linear-gradient(135deg,#0f172a 0%,#172554 100%);
-            color:white; border:1px solid #1e293b;
-            box-shadow:0 10px 30px rgba(15,23,42,.15); }
-  .eyebrow { color:#93c5fd; font-size:12px; text-transform:uppercase;
-             letter-spacing:.14em; font-weight:700; margin-bottom:10px; }
-  h1 { margin:0 0 14px; font-size:48px; line-height:1.05; font-weight:800; color:white; }
-  .subtitle { color:#dbeafe; font-size:18px; line-height:1.6; max-width:760px; }
-  .generated { margin-top:22px; color:#cbd5e1; font-size:14px; }
-  .card { background:white; border:1px solid #e2e8f0; border-radius:22px;
-          padding:24px; margin:22px 0; box-shadow:0 4px 18px rgba(15,23,42,.05); }
-  .card h2 { margin:0 0 16px; font-size:24px; color:#0f172a; font-weight:750; }
-  .muted { color:#64748b; line-height:1.6; }
+
+  /* ── Header ── */
+  .header { padding:36px 38px; border-radius:24px;
+            background:linear-gradient(135deg,#060d1f 0%,#0f1f45 55%,#0a1530 100%);
+            color:white; border:1px solid #1e3a6e;
+            box-shadow:0 16px 40px rgba(0,0,0,.55); }
+  .eyebrow { color:#60a5fa; font-size:11px; text-transform:uppercase;
+             letter-spacing:.18em; font-weight:800; margin-bottom:12px; }
+  h1 { margin:0 0 12px; font-size:42px; line-height:1.08; font-weight:800; color:#f8fafc; }
+  .subtitle { color:#93c5fd; font-size:15px; line-height:1.6; max-width:700px; }
+  .generated { margin-top:20px; color:#475569; font-size:13px; }
+
+  /* ── Cards ── */
+  .card { background:#111827; border:1px solid #1e293b; border-radius:18px;
+          padding:22px 24px; margin:16px 0;
+          box-shadow:0 6px 24px rgba(0,0,0,.35); }
+  .card h2 { margin:0 0 14px; font-size:13px; color:#60a5fa; font-weight:800;
+             text-transform:uppercase; letter-spacing:.10em; border-bottom:1px solid #1e293b;
+             padding-bottom:10px; }
+  .muted { color:#94a3b8; line-height:1.65; font-size:14px; }
+  p { color:#cbd5e1; font-size:14px; line-height:1.65; margin:0 0 10px; }
+
+  /* ── Tables ── */
   table { width:100%; border-collapse:collapse; font-size:13px;
           table-layout:fixed; word-wrap:break-word; }
-  th { text-align:left; color:#475569; border-bottom:2px solid #e2e8f0;
-       padding:10px 8px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-  td { border-bottom:1px solid #f1f5f9; padding:10px 8px; color:#0f172a;
-       vertical-align:top; line-height:1.4; }
-  tr:hover td { background:#f8fafc; }
-  .changed-row td { background:#fef3c7; }
-  .tag { display:inline-block; padding:6px 10px; border-radius:999px;
-         background:#eff6ff; color:#1d4ed8; font-size:12px; margin-right:8px; font-weight:600; }
+  th { text-align:left; color:#64748b; border-bottom:1px solid #1e293b;
+       padding:9px 8px; font-size:10px; text-transform:uppercase; letter-spacing:.07em; font-weight:700; }
+  td { border-bottom:1px solid #1a2235; padding:10px 8px; color:#cbd5e1;
+       vertical-align:top; line-height:1.45; }
+  tr:last-child td { border-bottom:none; }
+  tr:hover td { background:#141f2e; }
+  .changed-row td { background:#1c1a08; }
+
+  /* ── Pills & tags ── */
+  .tag { display:inline-block; padding:4px 10px; border-radius:999px;
+         background:#1e3a5f; color:#93c5fd; font-size:11px; margin-right:6px; font-weight:700; }
+  .move-pill     { display:inline-block; padding:3px 9px; border-radius:999px;
+                   font-size:12px; font-weight:700; background:#1e293b; color:#cbd5e1; }
+  .move-positive { background:#052e16; color:#4ade80; border:1px solid #166534; }
+  .move-negative { background:#2d0a0a; color:#f87171; border:1px solid #7f1d1d; }
+
+  /* ── Visual intelligence ── */
   .visual-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:10px 0 18px; }
-  .visual-metric { background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:16px; }
-  .metric-label { color:#64748b; font-size:11px; text-transform:uppercase;
-                  letter-spacing:.06em; font-weight:700; }
-  .metric-value { color:#0f172a; font-size:24px; font-weight:800; margin-top:8px; }
-  .metric-sub   { color:#64748b; font-size:13px; margin-top:4px; }
-  .mini-section-title { font-size:13px; font-weight:800; color:#334155;
-                        margin:18px 0 10px; text-transform:uppercase; letter-spacing:.06em; }
-  .bar-card { background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:14px; }
-  .bar-row  { display:grid; grid-template-columns:150px 1fr 70px;
+  .visual-metric { background:#0d1526; border:1px solid #1e293b; border-radius:14px; padding:16px; }
+  .metric-label { color:#64748b; font-size:10px; text-transform:uppercase;
+                  letter-spacing:.08em; font-weight:800; }
+  .metric-value { color:#f1f5f9; font-size:22px; font-weight:800; margin-top:8px; }
+  .metric-sub   { color:#64748b; font-size:12px; margin-top:5px; }
+  .mini-section-title { font-size:11px; font-weight:800; color:#60a5fa;
+                        margin:18px 0 10px; text-transform:uppercase; letter-spacing:.08em; }
+  .bar-card { background:#0d1526; border:1px solid #1e293b; border-radius:14px; padding:14px; }
+  .bar-row  { display:grid; grid-template-columns:155px 1fr 70px;
               align-items:center; gap:10px; margin:10px 0; }
-  .bar-label { color:#334155; font-size:13px; font-weight:600; }
-  .bar-track { height:10px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
-  .bar-fill  { height:10px; background:#2563eb; border-radius:999px; }
-  .bar-value { color:#475569; font-size:12px; text-align:right; font-weight:700; }
-  .move-pill     { display:inline-block; padding:4px 10px; border-radius:999px;
-                   font-size:12px; font-weight:700; background:#e2e8f0; color:#0f172a; }
-  .move-positive { background:#dcfce7; color:#166534; }
-  .move-negative { background:#fee2e2; color:#991b1b; }
-  .footer { color:#64748b; font-size:13px; margin-top:28px; text-align:center; }
+  .bar-label { color:#94a3b8; font-size:13px; font-weight:600; }
+  .bar-track { height:8px; background:#1e293b; border-radius:999px; overflow:hidden; }
+  .bar-fill  { height:8px; background:#3b82f6; border-radius:999px; }
+  .bar-value { color:#64748b; font-size:12px; text-align:right; font-weight:700; }
+
+  /* ── Footer ── */
+  .footer { color:#334155; font-size:12px; margin-top:28px; text-align:center;
+            padding:16px; border-top:1px solid #1e293b; }
+
+  /* ── Links ── */
+  a { color:#60a5fa; text-decoration:none; }
+  a:hover { text-decoration:underline; }
+
   @media only screen and (max-width:700px) {
-    h1 { font-size:34px; } .card { padding:18px; } table { font-size:12px; }
+    h1 { font-size:30px; } .card { padding:16px; } table { font-size:12px; }
+    .visual-grid { grid-template-columns:1fr; }
   }
 </style>"""
 
@@ -1256,10 +1280,9 @@ def build_hybrid_newsletter() -> tuple[str, str]:
   <div class="container">
 
     <div class="header">
-      <div class="eyebrow">Daily Portfolio Brief</div>
-      <h1>Morning Portfolio Update</h1>
-      <div class="subtitle">Facts-first portfolio monitoring: market movement, catalysts, macro events, SEC filings, and alerts.</div>
-      <p class="generated">Generated: {esc(generated_at)}</p>
+      <div class="eyebrow">📈 Daily Portfolio Brief</div>
+      <h1>Morning Market Brief</h1>
+      <div class="subtitle">Portfolio performance · macro regime · catalysts · SEC filings · alerts — {esc(generated_at)}</div>
     </div>
 
     <div class="card">
@@ -1422,20 +1445,87 @@ def build_hybrid_newsletter() -> tuple[str, str]:
     html_body = remove_disabled_sections(html_body, prefs)
 
     # ── Plain-text fallback ────────────────────────────────────────────────────
+    sep = "─" * 60
     text_lines = [
-        "Daily Portfolio Brief",
-        f"Generated: {generated_at}",
+        "DAILY PORTFOLIO BRIEF",
+        generated_at,
+        sep,
         "",
-        f"Biggest Headline: {biggest_headline}",
-        f"Source: {headline_source}",
-        "",
-        "Top Movers:",
     ]
+
+    # Executive summary
+    text_lines += [executive_summary, ""]
+
+    # Headline
+    text_lines += [
+        "BIGGEST HEADLINE",
+        f"  {biggest_headline}",
+        f"  Source: {headline_source}",
+        "",
+    ]
+
+    # Alerts
+    critical_alerts = [a for a in alert_rows if a.get("Tier") == "Critical"]
+    important_alerts = [a for a in alert_rows if a.get("Tier") == "Important"]
+    if critical_alerts or important_alerts:
+        text_lines.append("ALERTS")
+        for a in critical_alerts:
+            ticker = f" [{a['Ticker']}]" if a.get("Ticker") else ""
+            text_lines.append(f"  ⚠ CRITICAL{ticker}: {a['Detail']}")
+        for a in important_alerts:
+            ticker = f" [{a['Ticker']}]" if a.get("Ticker") else ""
+            text_lines.append(f"  • Important{ticker}: {a['Detail']}")
+        text_lines.append("")
+
+    # Top movers
+    text_lines.append("TOP MOVERS")
     for r in top_movers:
         text_lines.append(
-            f"  {r['Ticker']}: {r['Daily Move']} today, "
-            f"{r['Weekly Move']} weekly, {r['Volume vs 30D Avg']} volume"
+            f"  {r['Ticker']:<6} {r['Daily Move']:>8} today  "
+            f"{r['Weekly Move']:>8} weekly  {r['Volume vs 30D Avg']} vol"
         )
+    text_lines.append("")
+
+    # Portfolio snapshot
+    if portfolio_snapshot:
+        text_lines.append("PORTFOLIO SNAPSHOT")
+        for r in portfolio_snapshot:
+            text_lines.append(
+                f"  {r['Ticker']:<6} {r['Daily Move']:>8}  {r['Market Value']:>10}  {r['Weight']:>7}  {r['Sector']}"
+            )
+        text_lines.append("")
+
+    # Key macro
+    key_macro = [r for r in macro_rows if r.get("Ticker") in {"SPY", "QQQ", "^TNX", "CL=F", "GC=F", "^VIX"}]
+    if key_macro:
+        text_lines.append("MACRO SNAPSHOT")
+        for r in key_macro:
+            ind  = r.get("Indicator", r.get("Ticker", ""))
+            last = r.get("Latest", "—")
+            chg  = r.get("Daily Change (%)", "")
+            text_lines.append(f"  {ind:<22} {last:>10}  {chg}")
+        text_lines.append("")
+
+    # Upcoming catalysts
+    next_catalysts = earnings_rows[:3]
+    if next_catalysts:
+        text_lines.append("UPCOMING CATALYSTS")
+        for r in next_catalysts:
+            text_lines.append(f"  {r['Ticker']:<6} earnings  {r['Date']}  ({r['Days']})")
+        text_lines.append("")
+
+    # Top news
+    top_news = portfolio_news_rows[:5]
+    if top_news:
+        text_lines.append("PORTFOLIO NEWS")
+        for r in top_news:
+            text_lines.append(f"  [{r['Ticker']}] {r['Title']}")
+        text_lines.append("")
+
+    text_lines += [
+        sep,
+        "Factual monitoring only. No investment advice or recommendations.",
+    ]
     text_body = "\n".join(text_lines)
 
     return html_body, text_body
