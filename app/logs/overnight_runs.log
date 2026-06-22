@@ -1,0 +1,34 @@
+[2026-05-20T05:45:39.475642+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:45:39.478051+00:00] DRY RUN | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:45:39.478304+00:00] DRY RUN | Send newsletter email | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python send_newsletter.py
+[2026-05-20T05:45:39.478475+00:00] OVERNIGHT WORKFLOW DRY RUN COMPLETE
+[2026-05-20T05:45:39.694110+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:45:39.695154+00:00] DRY RUN | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:45:39.695334+00:00] DRY RUN | Send newsletter email | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python send_newsletter.py
+[2026-05-20T05:45:39.695451+00:00] OVERNIGHT WORKFLOW DRY RUN COMPLETE
+[2026-05-20T05:45:39.955739+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:45:39.956559+00:00] START | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:45:40.231464+00:00] FAIL | Generate newsletter, history, factors, and alerts | return_code=1
+[2026-05-20T05:45:40.231856+00:00] OUTPUT | Generate newsletter, history, factors, and alerts
+Traceback (most recent call last):
+  File "/Users/aidangarver/Downloads/newsletter_agent/app/main.py", line 7, in <module>
+    from app.ai.formatter import build_fallback_text_newsletter
+ModuleNotFoundError: No module named 'app'
+[2026-05-20T05:45:40.232125+00:00] OVERNIGHT WORKFLOW FAILED
+[2026-05-20T05:46:02.611473+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:46:02.612481+00:00] DRY RUN | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:46:02.612571+00:00] DRY RUN | Send newsletter email | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python send_newsletter.py
+[2026-05-20T05:46:02.612639+00:00] OVERNIGHT WORKFLOW DRY RUN COMPLETE
+[2026-05-20T05:46:02.741261+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:46:02.741885+00:00] DRY RUN | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:46:02.742085+00:00] DRY RUN | Send newsletter email | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python send_newsletter.py
+[2026-05-20T05:46:02.742202+00:00] OVERNIGHT WORKFLOW DRY RUN COMPLETE
+[2026-05-20T05:46:02.837906+00:00] OVERNIGHT WORKFLOW STARTED
+[2026-05-20T05:46:02.838435+00:00] START | Generate newsletter, history, factors, and alerts | /Users/aidangarver/Downloads/newsletter_agent/app/.venv/bin/python main.py
+[2026-05-20T05:46:02.899246+00:00] FAIL | Generate newsletter, history, factors, and alerts | return_code=1
+[2026-05-20T05:46:02.899491+00:00] OUTPUT | Generate newsletter, history, factors, and alerts
+Traceback (most recent call last):
+  File "/Users/aidangarver/Downloads/newsletter_agent/app/main.py", line 7, in <module>
+    from app.ai.formatter import build_fallback_text_newsletter
+ModuleNotFoundError: No module named 'app'
+[2026-05-20T05:46:02.899586+00:00] OVERNIGHT WORKFLOW FAILED

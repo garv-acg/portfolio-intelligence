@@ -1,0 +1,9 @@
+{
+  "user_id": "demo",
+  "display_name": "Demo User",
+  "email": null,
+  "portfolio_file": "data/users/demo/portfolio.csv",
+  "history_db": "data/users/demo/history.db",
+  "morning_brief_enabled": true,
+  "facts_only_mode": true
+}

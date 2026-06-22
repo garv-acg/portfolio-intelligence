@@ -1,0 +1,734 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import streamlit as st
+
+from app.data.factor_engine import cumulative_attribution, build_factor_signals
+
+
+DEFAULT_PORTFOLIO_PATH = Path("portfolio.csv")
+NEWSLETTER_HTML_PATH = Path("output/latest_newsletter.html")
+NEWSLETTER_TEXT_PATH = Path("output/latest_newsletter.txt")
+
+
+APP_CSS = """
+<style>
+:root {
+    --bg-primary: #020617;
+    --bg-secondary: #0f172a;
+    --bg-card: #111827;
+    --border: #1f2937;
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --accent: #93c5fd;
+    --positive: #86efac;
+    --negative: #fca5a5;
+}
+
+.stApp {
+    background: radial-gradient(circle at top left, #0f172a 0%, #020617 38%, #020617 100%);
+    color: var(--text-primary);
+}
+
+.block-container {
+    padding-top: 1.4rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
+    border-right: 1px solid #1f2937;
+}
+
+[data-testid="stMetric"] {
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid #1f2937;
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #94a3b8 !important;
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+[data-testid="stMetricValue"] {
+    color: #f8fafc !important;
+    font-weight: 850;
+}
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    border: 1px solid #1f2937;
+    border-radius: 18px;
+    overflow: hidden;
+}
+
+.stButton > button {
+    border-radius: 14px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-weight: 750;
+    transition: all 0.18s ease-in-out;
+}
+
+.stButton > button:hover {
+    border-color: #93c5fd;
+    color: #dbeafe;
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(147,197,253,0.12);
+}
+
+.stDownloadButton > button {
+    border-radius: 14px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-weight: 750;
+}
+
+hr {
+    border-color: #1f2937;
+}
+
+.card {
+    background: rgba(15, 23, 42, 0.86);
+    border: 1px solid #1f2937;
+    border-radius: 22px;
+    padding: 18px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.24);
+    margin-bottom: 14px;
+}
+
+.section-title {
+    color: #dbeafe;
+    font-size: 0.78rem;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.muted {
+    color: #94a3b8;
+    font-size: 0.86rem;
+}
+
+.big-title {
+    font-size: 2.15rem;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    margin-bottom: 0.25rem;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid #1f2937;
+    background: #020617;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    font-weight: 750;
+    margin-right: 6px;
+}
+
+.nav-note {
+    color: #64748b;
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+    }
+
+    .big-title {
+        font-size: 1.55rem;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 12px;
+    }
+}
+</style>
+"""
+
+
+def init_state() -> None:
+    defaults = {
+        "portfolio_path": str(find_portfolio_file()),
+        "last_action_output": "",
+        "last_action_ok": None,
+        "active_page": "Overview",
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def find_portfolio_file() -> Path:
+    candidates = [
+        Path("portfolio.csv"),
+        Path("data/portfolio.csv"),
+        Path("app/config/portfolio.csv"),
+        Path("app/data/portfolio.csv"),
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return DEFAULT_PORTFOLIO_PATH
+
+
+def normalize_portfolio(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    lower_map = {col.lower().strip(): col for col in df.columns}
+
+    if "ticker" not in lower_map:
+        df["ticker"] = ""
+    else:
+        df = df.rename(columns={lower_map["ticker"]: "ticker"})
+
+    if "shares" not in lower_map:
+        df["shares"] = 0.0
+    else:
+        df = df.rename(columns={lower_map["shares"]: "shares"})
+
+    current_lower_cols = [c.lower().strip() for c in df.columns]
+
+    if "name" not in current_lower_cols:
+        df["name"] = ""
+    else:
+        name_col = next(c for c in df.columns if c.lower().strip() == "name")
+        if name_col != "name":
+            df = df.rename(columns={name_col: "name"})
+
+    if "cost_basis" not in [c.lower().strip() for c in df.columns]:
+        df["cost_basis"] = ""
+    else:
+        cost_col = next(c for c in df.columns if c.lower().strip() == "cost_basis")
+        if cost_col != "cost_basis":
+            df = df.rename(columns={cost_col: "cost_basis"})
+
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+    df["shares"] = pd.to_numeric(df["shares"], errors="coerce").fillna(0.0)
+    df["name"] = df["name"].fillna("").astype("string")
+    df["cost_basis"] = df["cost_basis"].fillna("").astype("string")
+
+    preferred = ["ticker", "shares", "name", "cost_basis"]
+    remaining = [col for col in df.columns if col not in preferred]
+
+    return df[preferred + remaining]
+
+
+def load_portfolio(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["ticker", "shares", "name", "cost_basis"])
+    return normalize_portfolio(pd.read_csv(path))
+
+
+def save_portfolio(path: Path, df: pd.DataFrame) -> None:
+    df = normalize_portfolio(df)
+    df = df[df["ticker"].astype(str).str.strip() != ""]
+    df.to_csv(path, index=False)
+
+
+def run_command(command: list[str]) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = ""
+        if result.stdout:
+            output += result.stdout
+        if result.stderr:
+            output += "\n" + result.stderr
+
+        return result.returncode == 0, output.strip()
+
+    except Exception as exc:
+        return False, str(exc)
+
+
+def try_load_visual_analytics(df: pd.DataFrame) -> dict[str, Any] | None:
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.market_data import get_equity_snapshot
+        from app.data.visual_analytics import build_visual_analytics
+
+        holdings = load_portfolio(settings.portfolio_file)
+        snapshot = get_equity_snapshot(holdings)
+        analytics = build_visual_analytics(holdings, snapshot, lookback_days=120)
+
+        return analytics.__dict__
+
+    except Exception:
+        return None
+
+
+def render_header() -> None:
+    st.markdown(
+        """
+        <div class="big-title">Newsletter Control Center</div>
+        <div class="muted">Institutional portfolio monitor · research workflow · newsletter automation</div>
+        <div style="margin-top:12px;">
+            <span class="status-pill">Portfolio Editor</span>
+            <span class="status-pill">Newsletter Engine</span>
+            <span class="status-pill">SEC Intelligence</span>
+            <span class="status-pill">Visual Analytics</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_sidebar() -> str:
+    st.sidebar.markdown("## Control Center")
+    st.sidebar.caption("Navigate your workflow from one interface.")
+
+    page = st.sidebar.radio(
+        "Navigation",
+        [
+            "Overview",
+            "Portfolio",
+            "Analytics",
+            "Newsletter",
+            "Preview",
+            "Files",
+            "Factors",
+        ],
+        index=[
+            "Overview",
+            "Portfolio",
+            "Analytics",
+            "Newsletter",
+            "Preview",
+            "Files",
+            "Factors",
+        ].index(st.session_state.get("active_page", "Overview")),
+    )
+
+    st.session_state["active_page"] = page
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Settings")
+
+    st.session_state["portfolio_path"] = st.sidebar.text_input(
+        "Portfolio CSV path",
+        value=st.session_state.get("portfolio_path", str(find_portfolio_file())),
+    )
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### System")
+    st.sidebar.markdown(f'<div class="nav-note">HTML: <code>{NEWSLETTER_HTML_PATH}</code></div>', unsafe_allow_html=True)
+    st.sidebar.markdown(f'<div class="nav-note">Text: <code>{NEWSLETTER_TEXT_PATH}</code></div>', unsafe_allow_html=True)
+
+    return page
+
+
+def render_overview(df: pd.DataFrame, portfolio_path: Path) -> None:
+    st.markdown("### Platform Overview")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric("Holdings", len(df[df["ticker"].astype(str).str.strip() != ""]))
+
+    with c2:
+        total_shares = pd.to_numeric(df["shares"], errors="coerce").fillna(0).sum() if "shares" in df else 0
+        st.metric("Total Shares", f"{total_shares:,.3f}")
+
+    with c3:
+        st.metric("Newsletter Exists", "Yes" if NEWSLETTER_HTML_PATH.exists() else "No")
+
+    with c4:
+        size = NEWSLETTER_HTML_PATH.stat().st_size if NEWSLETTER_HTML_PATH.exists() else 0
+        st.metric("HTML Size", f"{size:,.0f} bytes")
+
+    st.divider()
+
+    left, right = st.columns([1.15, 0.85])
+
+    with left:
+        st.markdown('<div class="card"><div class="section-title">Current Holdings</div>', unsafe_allow_html=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown(
+            f"""
+            <div class="card">
+                <div class="section-title">Workflow</div>
+                <div class="muted">
+                    1. Edit holdings in Portfolio<br>
+                    2. Generate the newsletter<br>
+                    3. Preview the HTML<br>
+                    4. Send the email to yourself
+                </div>
+                <br>
+                <div class="section-title">Active File</div>
+                <div class="muted"><code>{portfolio_path}</code></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_portfolio(df: pd.DataFrame, portfolio_path: Path) -> None:
+    st.markdown("### Portfolio Editor")
+    st.caption("Edit holdings directly. Save writes back to your portfolio CSV.")
+
+    edited = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker", help="Stock ticker symbol", required=True),
+            "shares": st.column_config.NumberColumn(
+                "Shares",
+                help="Number of shares owned",
+                min_value=0.0,
+                step=0.001,
+                format="%.6f",
+                required=True,
+            ),
+            "name": st.column_config.TextColumn("Company Name"),
+            "cost_basis": st.column_config.TextColumn("Cost Basis"),
+        },
+        hide_index=True,
+        key="portfolio_editor",
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+
+    with c1:
+        if st.button("Save Portfolio", type="primary", use_container_width=True):
+            save_portfolio(portfolio_path, edited)
+            st.success(f"Saved portfolio to {portfolio_path}")
+
+    with c2:
+        if st.button("Reload Portfolio", use_container_width=True):
+            st.rerun()
+
+    with c3:
+        st.info("After saving, generate the newsletter from the Newsletter page.")
+
+
+def render_analytics(df: pd.DataFrame) -> None:
+    st.markdown("### Portfolio Analytics")
+    st.caption("In-app dashboard view. Newsletter visuals remain in the HTML brief.")
+
+    analytics = try_load_visual_analytics(df)
+
+    if not analytics:
+        st.warning("Analytics could not be loaded. Generate the newsletter or check data dependencies.")
+        return
+
+    allocation = pd.DataFrame(analytics.get("allocation", []))
+    sectors = pd.DataFrame(analytics.get("sector_exposure", []))
+    attribution = pd.DataFrame(analytics.get("daily_attribution", []))
+    rolling = pd.DataFrame(analytics.get("rolling_returns", []))
+    drawdown = pd.DataFrame(analytics.get("drawdown", []))
+    vol = analytics.get("volatility_monitor", {}) or {}
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric("Latest Return", f"{vol.get('latest_daily_return_pct', 0):+.2f}%")
+
+    with c2:
+        st.metric("Annualized Vol", f"{vol.get('annualized_volatility_pct', 0):+.2f}%")
+
+    with c3:
+        st.metric("21D Realized Vol", f"{vol.get('realized_21d_volatility_pct', 0):+.2f}%")
+
+    with c4:
+        st.metric("Vol Status", str(vol.get("status", "N/A")))
+
+    st.divider()
+
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("#### Portfolio Equity Curve")
+        if not rolling.empty and "date" in rolling and "portfolio_value" in rolling:
+            st.line_chart(rolling.set_index("date")["portfolio_value"], height=260)
+        else:
+            st.info("No rolling return data available.")
+
+    with right:
+        st.markdown("#### Drawdown Monitor")
+        if not drawdown.empty and "date" in drawdown and "drawdown_pct" in drawdown:
+            st.area_chart(drawdown.set_index("date")["drawdown_pct"], height=260)
+        else:
+            st.info("No drawdown data available.")
+
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("#### Allocation")
+        if not allocation.empty and "ticker" in allocation and "weight_pct" in allocation:
+            st.bar_chart(allocation.set_index("ticker")["weight_pct"], height=300)
+            st.dataframe(allocation, use_container_width=True, hide_index=True)
+        else:
+            st.info("No allocation data available.")
+
+    with right:
+        st.markdown("#### Sector Exposure")
+        if not sectors.empty and "sector" in sectors and "weight_pct" in sectors:
+            st.bar_chart(sectors.set_index("sector")["weight_pct"], height=300)
+            st.dataframe(sectors, use_container_width=True, hide_index=True)
+        else:
+            st.info("No sector data available.")
+
+    st.markdown("#### Daily Attribution")
+    if not attribution.empty:
+        st.dataframe(
+            attribution.style.background_gradient(
+                subset=["daily_pl", "contribution_pct"],
+                cmap="RdYlGn",
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No attribution data available.")
+
+
+def render_newsletter_actions() -> None:
+    st.markdown("### Newsletter Actions")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        if st.button("Generate Newsletter", type="primary", use_container_width=True):
+            with st.spinner("Generating latest newsletter..."):
+                ok, output = run_command([sys.executable, "main.py"])
+
+            st.session_state["last_action_ok"] = ok
+            st.session_state["last_action_output"] = output
+
+            if ok:
+                st.success("Newsletter generated successfully.")
+            else:
+                st.error("Newsletter generation failed.")
+
+    with c2:
+        if st.button("Send Email", use_container_width=True):
+            if not Path("send_newsletter.py").exists():
+                st.error("send_newsletter.py not found in project root.")
+            else:
+                with st.spinner("Sending newsletter email..."):
+                    ok, output = run_command([sys.executable, "send_newsletter.py"])
+
+                st.session_state["last_action_ok"] = ok
+                st.session_state["last_action_output"] = output
+
+                if ok:
+                    st.success("Newsletter email sent successfully.")
+                else:
+                    st.error("Email send failed.")
+
+    with c3:
+        if st.button("Generate + Send", use_container_width=True):
+            with st.spinner("Generating newsletter..."):
+                ok_generate, output_generate = run_command([sys.executable, "main.py"])
+
+            if not ok_generate:
+                st.session_state["last_action_ok"] = False
+                st.session_state["last_action_output"] = output_generate
+                st.error("Generation failed. Email not sent.")
+            elif not Path("send_newsletter.py").exists():
+                st.error("send_newsletter.py not found in project root.")
+            else:
+                with st.spinner("Sending email..."):
+                    ok_send, output_send = run_command([sys.executable, "send_newsletter.py"])
+
+                st.session_state["last_action_ok"] = ok_send
+                st.session_state["last_action_output"] = output_send
+
+                if ok_send:
+                    st.success("Generated and sent successfully.")
+                else:
+                    st.error("Generated, but email failed.")
+
+    st.divider()
+
+    status_rows = [
+        {
+            "file": str(NEWSLETTER_HTML_PATH),
+            "exists": NEWSLETTER_HTML_PATH.exists(),
+            "size_bytes": NEWSLETTER_HTML_PATH.stat().st_size if NEWSLETTER_HTML_PATH.exists() else 0,
+        },
+        {
+            "file": str(NEWSLETTER_TEXT_PATH),
+            "exists": NEWSLETTER_TEXT_PATH.exists(),
+            "size_bytes": NEWSLETTER_TEXT_PATH.stat().st_size if NEWSLETTER_TEXT_PATH.exists() else 0,
+        },
+    ]
+
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+
+    with st.expander("Last Command Output", expanded=st.session_state.get("last_action_ok") is False):
+        st.code(st.session_state.get("last_action_output", "") or "No output yet.")
+
+
+def render_preview() -> None:
+    st.markdown("### HTML Preview")
+
+    if NEWSLETTER_HTML_PATH.exists():
+        html = NEWSLETTER_HTML_PATH.read_text(encoding="utf-8", errors="ignore")
+        st.components.v1.html(html, height=920, scrolling=True)
+
+        st.download_button(
+            "Download HTML",
+            data=html,
+            file_name="latest_newsletter.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+    else:
+        st.warning("No HTML newsletter found yet. Generate the newsletter first.")
+
+
+def render_files(portfolio_path: Path) -> None:
+    st.markdown("### Files / CSV")
+
+    st.markdown("#### Portfolio CSV")
+    if portfolio_path.exists():
+        st.code(portfolio_path.read_text(), language="csv")
+    else:
+        st.warning("Portfolio file does not exist yet. Save once to create it.")
+
+    st.divider()
+    st.markdown("#### Text Newsletter")
+
+    if NEWSLETTER_TEXT_PATH.exists():
+        st.text_area(
+            "latest_newsletter.txt",
+            value=NEWSLETTER_TEXT_PATH.read_text(encoding="utf-8", errors="ignore"),
+            height=500,
+        )
+    else:
+        st.warning("No text newsletter found yet.")
+
+
+def render_factors() -> None:
+    st.markdown("### Cumulative Attribution + Factor Engine")
+    st.caption("Attribution comes from SQLite history. Factor scores use price history, benchmark relative strength, earnings dates, and SEC flags.")
+
+    st.markdown("#### Cumulative Attribution")
+
+    window = st.selectbox("Attribution window", ["All history", "7 days", "30 days", "90 days"], index=0)
+
+    days = None
+    if window == "7 days":
+        days = 7
+    elif window == "30 days":
+        days = 30
+    elif window == "90 days":
+        days = 90
+
+    attr = cumulative_attribution(days=days)
+
+    if attr.empty:
+        st.warning("No attribution history found yet. Generate a few newsletters to build attribution history.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            best = attr.iloc[0]
+            st.metric("Top Creator", best["ticker"], f"${best['cumulative_daily_pl']:,.2f}")
+        with c2:
+            worst = attr.sort_values("cumulative_daily_pl").iloc[0]
+            st.metric("Top Destroyer", worst["ticker"], f"${worst['cumulative_daily_pl']:,.2f}")
+        with c3:
+            st.metric("Tracked Holdings", len(attr))
+
+        st.bar_chart(attr.set_index("ticker")["cumulative_daily_pl"], height=320)
+        st.dataframe(attr, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("#### Current Factor Signals")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.earnings import get_upcoming_earnings
+        from app.data.sec_filings import get_sec_filings
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [holding.ticker for holding in holdings]
+
+        earnings = get_upcoming_earnings(tickers, days_ahead=30)
+        sec = get_sec_filings(tickers, lookback_days=30, max_filings_per_ticker=3)
+
+        signals = build_factor_signals(tickers, earnings_calendar=earnings, sec_filings=sec)
+        factor_df = pd.DataFrame([signal.__dict__ for signal in signals])
+
+        if factor_df.empty:
+            st.warning("No factor signals generated.")
+        else:
+            st.bar_chart(factor_df.set_index("ticker")["composite_score"], height=320)
+            st.dataframe(factor_df, use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Factor engine failed: {exc}")
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Newsletter Control Center",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    st.markdown(APP_CSS, unsafe_allow_html=True)
+    init_state()
+    page = render_sidebar()
+
+    portfolio_path = Path(st.session_state["portfolio_path"])
+    df = load_portfolio(portfolio_path)
+
+    render_header()
+    st.divider()
+
+    if page == "Overview":
+        render_overview(df, portfolio_path)
+    elif page == "Portfolio":
+        render_portfolio(df, portfolio_path)
+    elif page == "Analytics":
+        render_analytics(df)
+    elif page == "Newsletter":
+        render_newsletter_actions()
+    elif page == "Preview":
+        render_preview()
+    elif page == "Files":
+        render_files(portfolio_path)
+    elif page == "Factors":
+        render_factors()
+
+
+if __name__ == "__main__":
+    main()

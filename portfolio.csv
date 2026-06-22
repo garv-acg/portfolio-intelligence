@@ -1,0 +1,7 @@
+ticker,shares,name,cost_basis
+SPOT,1.0,Spotify Technology,314.70
+AVGO,1.004,Broadcom,303.97
+AAPL,1.002,Apple,210.79
+GE,1.021,GE Aerospace,275.45
+AMZN,1.0,Amazon,193.63
+NVDA,1.0,NVIDIA,145.11

@@ -1,0 +1,7 @@
+event,release_date,time,importance,actual,expected,prior,last_updated,source,source_url
+CPI Inflation,2026-06-10,8:30 AM ET,High,4.3%,3.9%,3.6%,2026-06-10,BLS,https://www.bls.gov/schedule/news_release/cpi.htm
+FOMC Rate Decision,2026-06-17,2:00 PM ET,High,,No change,3.50-3.75%,,Federal Reserve,https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+Jobs Report,2026-06-05,8:30 AM ET,High,+172K,155K,177K,2026-06-05,BLS,https://www.bls.gov/schedule/news_release/empsit.htm
+PCE Inflation,2026-05-29,8:30 AM ET,High,3.8%,2.2%,2.3%,2026-05-29,BEA,https://www.bea.gov/news/schedule
+Retail Sales,2026-06-17,8:30 AM ET,Medium,+1.0%,+0.3%,-0.4%,2026-06-17,Census Bureau,https://www.census.gov/economic-indicators/
+Fed Funds Probability,Daily,Market hours,Medium,,,,,CME FedWatch / rates provider,https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html

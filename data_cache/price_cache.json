@@ -1,0 +1,105 @@
+{
+  "AAPL": {
+    "price": 297.010009765625,
+    "previous_close": 298.010009765625,
+    "source": "Yahoo Finance",
+    "provider_symbol": "AAPL",
+    "as_of": "2026-06-22T20:37:03.709435+00:00"
+  },
+  "MSFT": {
+    "price": 423.5400085449219,
+    "previous_close": 421.9200134277344,
+    "source": "Yahoo Finance",
+    "as_of": "2026-05-18T23:49:17.899821+00:00"
+  },
+  "NVDA": {
+    "price": 208.64999389648438,
+    "previous_close": 210.69000244140625,
+    "source": "Yahoo Finance",
+    "provider_symbol": "NVDA",
+    "as_of": "2026-06-22T20:37:02.928497+00:00"
+  },
+  "AMZN": {
+    "price": 232.79,
+    "previous_close": 244.39,
+    "source": "Alpha Vantage",
+    "provider_symbol": "AMZN",
+    "as_of": "2026-06-22T20:37:03.112128+00:00"
+  },
+  "GOOGL": {
+    "price": 396.94000244140625,
+    "previous_close": 396.7799987792969,
+    "source": "Yahoo Finance",
+    "as_of": "2026-05-18T23:49:18.510088+00:00"
+  },
+  "^GSPC": {
+    "price": 7472.7900390625,
+    "previous_close": 7500.580078125,
+    "source": "Yahoo Finance",
+    "provider_symbol": "^GSPC",
+    "as_of": "2026-06-22T20:37:03.880893+00:00"
+  },
+  "^IXIC": {
+    "price": 26166.6015625,
+    "previous_close": 26517.9296875,
+    "source": "Yahoo Finance",
+    "provider_symbol": "^IXIC",
+    "as_of": "2026-06-22T20:37:04.027863+00:00"
+  },
+  "^DJI": {
+    "price": 51712.7109375,
+    "previous_close": 51564.69921875,
+    "source": "Yahoo Finance",
+    "provider_symbol": "^DJI",
+    "as_of": "2026-06-22T20:37:04.204500+00:00"
+  },
+  "^TNX": {
+    "price": 4.508999824523926,
+    "previous_close": 4.451000213623047,
+    "source": "Yahoo Finance",
+    "provider_symbol": "^TNX",
+    "as_of": "2026-06-22T20:37:04.350640+00:00"
+  },
+  "CL=F": {
+    "price": 74.0999984741211,
+    "previous_close": 76.5999984741211,
+    "source": "Yahoo Finance",
+    "provider_symbol": "CL=F",
+    "as_of": "2026-06-22T20:37:04.457172+00:00"
+  },
+  "GC=F": {
+    "price": 4209.10009765625,
+    "previous_close": 4224.10009765625,
+    "source": "Yahoo Finance",
+    "provider_symbol": "GC=F",
+    "as_of": "2026-06-22T20:37:04.565490+00:00"
+  },
+  "DX-Y.NYB": {
+    "price": 101.01699829101562,
+    "previous_close": 100.8499984741211,
+    "source": "Yahoo Finance",
+    "provider_symbol": "DX-Y.NYB",
+    "as_of": "2026-06-22T20:37:04.698600+00:00"
+  },
+  "SPOT": {
+    "price": 459.67,
+    "previous_close": 468.08,
+    "source": "Alpha Vantage",
+    "provider_symbol": "SPOT",
+    "as_of": "2026-06-22T20:37:01.905442+00:00"
+  },
+  "AVGO": {
+    "price": 392.1300048828125,
+    "previous_close": 411.3500061035156,
+    "source": "Yahoo Finance",
+    "provider_symbol": "AVGO",
+    "as_of": "2026-06-22T20:37:02.670673+00:00"
+  },
+  "GE": {
+    "price": 355.1199951171875,
+    "previous_close": 357.6400146484375,
+    "source": "Yahoo Finance",
+    "provider_symbol": "GE",
+    "as_of": "2026-06-22T20:37:03.433734+00:00"
+  }
+}

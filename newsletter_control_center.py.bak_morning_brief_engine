@@ -1,0 +1,1571 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import streamlit as st
+
+from app.config.user_profiles import ensure_default_profiles, get_user_profile, create_user_profile
+
+from app.data.execution_engine import save_rebalance_recommendations
+
+from app.data.alert_engine import latest_alerts, alert_summary
+
+from app.data.factor_engine import cumulative_attribution, build_factor_signals
+
+
+DEFAULT_PORTFOLIO_PATH = Path("portfolio.csv")
+NEWSLETTER_HTML_PATH = Path("output/latest_newsletter.html")
+NEWSLETTER_TEXT_PATH = Path("output/latest_newsletter.txt")
+
+
+APP_CSS = """
+<style>
+:root {
+    --bg-primary: #020617;
+    --bg-secondary: #0f172a;
+    --bg-card: #111827;
+    --border: #1f2937;
+    --text-primary: #f8fafc;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --accent: #93c5fd;
+    --positive: #86efac;
+    --negative: #fca5a5;
+}
+
+.stApp {
+    background: radial-gradient(circle at top left, #0f172a 0%, #020617 38%, #020617 100%);
+    color: var(--text-primary);
+}
+
+.block-container {
+    padding-top: 1.4rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #020617 0%, #0f172a 100%);
+    border-right: 1px solid #1f2937;
+}
+
+[data-testid="stMetric"] {
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid #1f2937;
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #94a3b8 !important;
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+[data-testid="stMetricValue"] {
+    color: #f8fafc !important;
+    font-weight: 850;
+}
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    border: 1px solid #1f2937;
+    border-radius: 18px;
+    overflow: hidden;
+}
+
+.stButton > button {
+    border-radius: 14px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-weight: 750;
+    transition: all 0.18s ease-in-out;
+}
+
+.stButton > button:hover {
+    border-color: #93c5fd;
+    color: #dbeafe;
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(147,197,253,0.12);
+}
+
+.stDownloadButton > button {
+    border-radius: 14px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f8fafc;
+    font-weight: 750;
+}
+
+hr {
+    border-color: #1f2937;
+}
+
+.card {
+    background: rgba(15, 23, 42, 0.86);
+    border: 1px solid #1f2937;
+    border-radius: 22px;
+    padding: 18px;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.24);
+    margin-bottom: 14px;
+}
+
+.section-title {
+    color: #dbeafe;
+    font-size: 0.78rem;
+    font-weight: 850;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.muted {
+    color: #94a3b8;
+    font-size: 0.86rem;
+}
+
+.big-title {
+    font-size: 2.15rem;
+    font-weight: 900;
+    letter-spacing: -0.04em;
+    margin-bottom: 0.25rem;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid #1f2937;
+    background: #020617;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    font-weight: 750;
+    margin-right: 6px;
+}
+
+.nav-note {
+    color: #64748b;
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+@media (max-width: 768px) {
+    .block-container {
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+    }
+
+    .big-title {
+        font-size: 1.55rem;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 12px;
+    }
+}
+</style>
+"""
+
+
+def init_state() -> None:
+    defaults = {
+        "portfolio_path": str(find_portfolio_file()),
+        "last_action_output": "",
+        "last_action_ok": None,
+        "active_page": "Overview",
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def find_portfolio_file() -> Path:
+    candidates = [
+        Path("portfolio.csv"),
+        Path("data/portfolio.csv"),
+        Path("app/config/portfolio.csv"),
+        Path("app/data/portfolio.csv"),
+    ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return DEFAULT_PORTFOLIO_PATH
+
+
+def normalize_portfolio(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    lower_map = {col.lower().strip(): col for col in df.columns}
+
+    if "ticker" not in lower_map:
+        df["ticker"] = ""
+    else:
+        df = df.rename(columns={lower_map["ticker"]: "ticker"})
+
+    if "shares" not in lower_map:
+        df["shares"] = 0.0
+    else:
+        df = df.rename(columns={lower_map["shares"]: "shares"})
+
+    current_lower_cols = [c.lower().strip() for c in df.columns]
+
+    if "name" not in current_lower_cols:
+        df["name"] = ""
+    else:
+        name_col = next(c for c in df.columns if c.lower().strip() == "name")
+        if name_col != "name":
+            df = df.rename(columns={name_col: "name"})
+
+    if "cost_basis" not in [c.lower().strip() for c in df.columns]:
+        df["cost_basis"] = ""
+    else:
+        cost_col = next(c for c in df.columns if c.lower().strip() == "cost_basis")
+        if cost_col != "cost_basis":
+            df = df.rename(columns={cost_col: "cost_basis"})
+
+    df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+    df["shares"] = pd.to_numeric(df["shares"], errors="coerce").fillna(0.0)
+    df["name"] = df["name"].fillna("").astype("string")
+    df["cost_basis"] = df["cost_basis"].fillna("").astype("string")
+
+    preferred = ["ticker", "shares", "name", "cost_basis"]
+    remaining = [col for col in df.columns if col not in preferred]
+
+    return df[preferred + remaining]
+
+
+def load_portfolio(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["ticker", "shares", "name", "cost_basis"])
+    return normalize_portfolio(pd.read_csv(path))
+
+
+def save_portfolio(path: Path, df: pd.DataFrame) -> None:
+    df = normalize_portfolio(df)
+    df = df[df["ticker"].astype(str).str.strip() != ""]
+    df.to_csv(path, index=False)
+
+
+def run_command(command: list[str]) -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = ""
+        if result.stdout:
+            output += result.stdout
+        if result.stderr:
+            output += "\n" + result.stderr
+
+        return result.returncode == 0, output.strip()
+
+    except Exception as exc:
+        return False, str(exc)
+
+
+def try_load_visual_analytics(df: pd.DataFrame) -> dict[str, Any] | None:
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.market_data import get_equity_snapshot
+        from app.data.visual_analytics import build_visual_analytics
+
+        holdings = load_portfolio(settings.portfolio_file)
+        snapshot = get_equity_snapshot(holdings)
+        analytics = build_visual_analytics(holdings, snapshot, lookback_days=120)
+
+        return analytics.__dict__
+
+    except Exception:
+        return None
+
+
+def _pretty_column_name(col: str) -> str:
+    mapping = {
+        "ticker": "Ticker",
+        "sector": "Sector",
+        "signal_label": "Signal Label",
+        "composite_score": "Composite Score (0-100)",
+        "volatility_21d_pct": "21D Volatility (%)",
+        "relative_strength_21d_pct": "21D Relative Strength (%)",
+        "drawdown_pct": "Drawdown (%)",
+        "current_weight_pct": "Current Weight (%)",
+        "target_weight_pct": "Target Weight (%)",
+        "weight_drift_pct": "Weight Drift (%)",
+        "value": "Current Value ($)",
+        "target_value": "Target Value ($)",
+        "trade_value": "Trade Value ($)",
+        "action": "Action",
+        "cumulative_daily_pl": "Cumulative Daily P/L ($)",
+        "avg_contribution_pct": "Avg Contribution (%)",
+        "cumulative_contribution_pct": "Cumulative Contribution (%)",
+        "avg_move_pct": "Avg Move (%)",
+        "avg_weight_pct": "Avg Weight (%)",
+        "best_daily_pl": "Best Daily P/L ($)",
+        "worst_daily_pl": "Worst Daily P/L ($)",
+        "observations": "Observations",
+        "daily_pl": "Daily P/L ($)",
+        "move_pct": "Move (%)",
+        "contribution_pct": "Contribution (%)",
+        "portfolio_value": "Portfolio Value ($)",
+        "risk_score": "Risk Score (0-100)",
+        "inflation_score": "Inflation Score (0-100)",
+        "growth_score": "Growth Score (0-100)",
+        "liquidity_score": "Liquidity Score (0-100)",
+    }
+    return mapping.get(str(col), str(col).replace("_", " ").title())
+
+
+def _format_table_for_display(df):
+    import pandas as pd
+
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+
+    for col in out.columns:
+        label = str(col).lower()
+
+        def fmt(v):
+            if pd.isna(v):
+                return ""
+            if isinstance(v, (int, float)):
+                if "score" in label:
+                    return f"{v:.1f}/100"
+                if "pct" in label or "weight" in label or "move" in label or "drawdown" in label or "volatility" in label or "contribution" in label:
+                    return f"{v:+.2f}%"
+                if "value" in label or "pl" in label or "trade" in label or "price" in label:
+                    return f"${v:,.2f}"
+                return f"{v:,.2f}"
+            return v
+
+        out[col] = out[col].map(fmt)
+
+    out = out.rename(columns={col: _pretty_column_name(col) for col in out.columns})
+    return out
+
+
+def _format_chart_for_display(df):
+    if df is None or df.empty:
+        return df
+    return df.rename(columns={col: _pretty_column_name(col) for col in df.columns})
+
+def render_header() -> None:
+    st.markdown(
+        """
+        <div class="big-title">Daily Portfolio Brief</div>
+        <div class="muted">Daily portfolio updates · factual monitoring · morning brief automation</div>
+        <div style="margin-top:12px;">
+            <span class="status-pill">Portfolio</span>
+            <span class="status-pill">Morning Brief</span>
+            <span class="status-pill">SEC Filings</span>
+            <span class="status-pill">Market Monitor</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_user_profile_selector() -> Path:
+    ensure_default_profiles()
+    profiles = ensure_default_profiles()
+
+    st.sidebar.markdown("### User Profile")
+
+    labels = {
+        f"{profile.display_name} ({profile.user_id})": profile.user_id
+        for profile in profiles
+    }
+
+    selected = st.sidebar.selectbox("Active user", list(labels.keys()))
+    profile = get_user_profile(labels[selected])
+
+    st.session_state["active_user_id"] = profile.user_id
+    st.session_state["portfolio_path_override"] = str(profile.portfolio_file)
+
+    with st.sidebar.expander("Create User", expanded=False):
+        new_name = st.text_input("Display name")
+        new_email = st.text_input("Email")
+        if st.button("Create Profile"):
+            if new_name.strip():
+                new_profile = create_user_profile(
+                    display_name=new_name.strip(),
+                    email=new_email.strip() or None,
+                    copy_from_portfolio=profile.portfolio_file,
+                )
+                st.session_state["active_user_id"] = new_profile.user_id
+                st.session_state["portfolio_path_override"] = str(new_profile.portfolio_file)
+                st.rerun()
+
+    st.sidebar.caption(f"Portfolio: {profile.portfolio_file}")
+    return profile.portfolio_file
+
+
+def render_sidebar() -> str:
+    st.sidebar.markdown("## Control Center")
+    st.sidebar.caption("Navigate your workflow from one interface.")
+
+    nav_pages = [
+        "Overview",
+        "Portfolio",
+        "Monitor",
+        "Market Workbench",
+        "Analytics",
+        "Newsletter",
+        "Preview",
+        "History",
+        "Alerts",
+    ]
+
+    active_page = st.session_state.get("active_page", "Overview")
+
+    if active_page not in nav_pages:
+        active_page = "Overview"
+        st.session_state["active_page"] = active_page
+
+    page = st.sidebar.radio(
+        "Navigation",
+        nav_pages,
+        index=nav_pages.index(active_page),
+    )
+
+    st.session_state["active_page"] = page
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Settings")
+
+    # User profile selector
+    ensure_default_profiles()
+    _profiles = ensure_default_profiles()
+    _labels = {f"{p.display_name} ({p.user_id})": p.user_id for p in _profiles}
+
+    _current_user = st.session_state.get("active_user_id")
+    _default_index = 0
+    _label_list = list(_labels.keys())
+
+    if _current_user:
+        for _i, _label in enumerate(_label_list):
+            if _labels[_label] == _current_user:
+                _default_index = _i
+                break
+
+    _selected_label = st.sidebar.selectbox("User Profile", _label_list, index=_default_index)
+    _selected_profile = get_user_profile(_labels[_selected_label])
+
+    st.session_state["active_user_id"] = _selected_profile.user_id
+    st.session_state["portfolio_path_override"] = str(_selected_profile.portfolio_file)
+
+    with st.sidebar.expander("Create User", expanded=False):
+        _new_name = st.text_input("Display name", key="new_profile_display_name")
+        _new_email = st.text_input("Email", key="new_profile_email")
+
+        if st.button("Create User Profile"):
+            if not _new_name.strip():
+                st.warning("Enter a display name first.")
+            else:
+                _new_profile = create_user_profile(
+                    display_name=_new_name.strip(),
+                    email=_new_email.strip() or None,
+                    copy_from=_selected_profile.portfolio_file,
+                )
+                st.session_state["active_user_id"] = _new_profile.user_id
+                st.session_state["portfolio_path_override"] = str(_new_profile.portfolio_file)
+                st.success(f"Created profile: {_new_profile.display_name}")
+                st.rerun()
+
+    st.sidebar.caption(f"Active portfolio: {_selected_profile.portfolio_file}")
+    portfolio_path = Path(st.session_state.get("portfolio_path_override", str(DEFAULT_PORTFOLIO_PATH)))
+
+
+    return page
+
+
+def render_overview(df: pd.DataFrame, portfolio_path: Path) -> None:
+    st.markdown("### Daily Portfolio Overview")
+
+    st.info(
+        "This app is designed as a facts-first daily portfolio update system. "
+        "It monitors holdings, exposures, filings, catalysts, alerts, and newsletter output. "
+        "It does not make investment decisions for the user."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric("Holdings", len(df[df["ticker"].astype(str).str.strip() != ""]))
+
+    with c2:
+        total_shares = pd.to_numeric(df["shares"], errors="coerce").fillna(0).sum() if "shares" in df else 0
+        st.metric("Total Shares", f"{total_shares:,.3f}")
+
+    with c3:
+        st.metric("Newsletter Exists", "Yes" if NEWSLETTER_HTML_PATH.exists() else "No")
+
+    with c4:
+        size = NEWSLETTER_HTML_PATH.stat().st_size if NEWSLETTER_HTML_PATH.exists() else 0
+        st.metric("HTML Size", f"{size:,.0f} bytes")
+
+    st.divider()
+
+    left, right = st.columns([1.15, 0.85])
+
+    with left:
+        st.markdown('<div class="card"><div class="section-title">Current Holdings</div>', unsafe_allow_html=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown(
+            f"""
+            <div class="card">
+                <div class="section-title">Workflow</div>
+                <div class="muted">
+                    1. Edit holdings in Portfolio<br>
+                    2. Generate the newsletter<br>
+                    3. Preview the HTML<br>
+                    4. Send the email to yourself
+                </div>
+                <br>
+                <div class="section-title">Active File</div>
+                <div class="muted"><code>{portfolio_path}</code></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_portfolio(df: pd.DataFrame, portfolio_path: Path) -> None:
+    st.markdown("### Portfolio Editor")
+    st.caption("Edit holdings directly. Save writes back to your portfolio CSV.")
+
+    edited = st.data_editor(
+        df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "ticker": st.column_config.TextColumn("Ticker", help="Stock ticker symbol", required=True),
+            "shares": st.column_config.NumberColumn(
+                "Shares",
+                help="Number of shares owned",
+                min_value=0.0,
+                step=0.001,
+                format="%.6f",
+                required=True,
+            ),
+            "name": st.column_config.TextColumn("Company Name"),
+            "cost_basis": st.column_config.TextColumn("Cost Basis"),
+        },
+        hide_index=True,
+        key="portfolio_editor",
+    )
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+
+    with c1:
+        if st.button("Save Portfolio", type="primary", use_container_width=True):
+            save_portfolio(portfolio_path, edited)
+            st.success(f"Saved portfolio to {portfolio_path}")
+
+    with c2:
+        if st.button("Reload Portfolio", use_container_width=True):
+            st.rerun()
+
+    with c3:
+        st.info("After saving, generate the newsletter from the Newsletter page.")
+
+
+def render_analytics(df: pd.DataFrame) -> None:
+    st.markdown("### Portfolio Analytics")
+    st.caption("In-app dashboard view. Newsletter visuals remain in the HTML brief.")
+
+    analytics = try_load_visual_analytics(df)
+
+    if not analytics:
+        st.warning("Analytics could not be loaded. Generate the newsletter or check data dependencies.")
+        return
+
+    allocation = pd.DataFrame(analytics.get("allocation", []))
+    sectors = pd.DataFrame(analytics.get("sector_exposure", []))
+    attribution = pd.DataFrame(analytics.get("daily_attribution", []))
+    rolling = pd.DataFrame(analytics.get("rolling_returns", []))
+    drawdown = pd.DataFrame(analytics.get("drawdown", []))
+    vol = analytics.get("volatility_monitor", {}) or {}
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    with c1:
+        st.metric("Latest Return", f"{vol.get('latest_daily_return_pct', 0):+.2f}%")
+
+    with c2:
+        st.metric("Annualized Vol", f"{vol.get('annualized_volatility_pct', 0):+.2f}%")
+
+    with c3:
+        st.metric("21D Realized Vol", f"{vol.get('realized_21d_volatility_pct', 0):+.2f}%")
+
+    with c4:
+        st.metric("Vol Status", str(vol.get("status", "N/A")))
+
+    st.divider()
+
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("#### Portfolio Equity Curve")
+        if not rolling.empty and "date" in rolling and "portfolio_value" in rolling:
+            st.line_chart(rolling.set_index("date")["portfolio_value"], height=260)
+        else:
+            st.info("No rolling return data available.")
+
+    with right:
+        st.markdown("#### Drawdown Monitor")
+        if not drawdown.empty and "date" in drawdown and "drawdown_pct" in drawdown:
+            st.area_chart(drawdown.set_index("date")["drawdown_pct"], height=260)
+        else:
+            st.info("No drawdown data available.")
+
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("#### Allocation")
+        if not allocation.empty and "ticker" in allocation and "weight_pct" in allocation:
+            st.bar_chart(allocation.set_index("ticker")["weight_pct"], height=300)
+            st.dataframe(allocation, use_container_width=True, hide_index=True)
+        else:
+            st.info("No allocation data available.")
+
+    with right:
+        st.markdown("#### Sector Exposure")
+        if not sectors.empty and "sector" in sectors and "weight_pct" in sectors:
+            st.bar_chart(sectors.set_index("sector")["weight_pct"], height=300)
+            st.dataframe(_format_table_for_display(sectors), use_container_width=True, hide_index=True)
+        else:
+            st.info("No sector data available.")
+
+    st.markdown("#### Daily Attribution")
+    if not attribution.empty:
+        st.dataframe(
+            attribution.style.background_gradient(
+                subset=["daily_pl", "contribution_pct"],
+                cmap="RdYlGn",
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No attribution data available.")
+
+
+def render_newsletter_actions() -> None:
+    st.markdown("### Newsletter Actions")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        if st.button("Generate Newsletter", type="primary", use_container_width=True):
+            with st.spinner("Generating latest newsletter..."):
+                ok, output = run_command([sys.executable, "main.py"])
+
+            st.session_state["last_action_ok"] = ok
+            st.session_state["last_action_output"] = output
+
+            if ok:
+                st.success("Newsletter generated successfully.")
+            else:
+                st.error("Newsletter generation failed.")
+
+    with c2:
+        if st.button("Send Email", use_container_width=True):
+            if not Path("send_newsletter.py").exists():
+                st.error("send_newsletter.py not found in project root.")
+            else:
+                with st.spinner("Sending newsletter email..."):
+                    ok, output = run_command([sys.executable, "send_newsletter.py"])
+
+                st.session_state["last_action_ok"] = ok
+                st.session_state["last_action_output"] = output
+
+                if ok:
+                    st.success("Newsletter email sent successfully.")
+                else:
+                    st.error("Email send failed.")
+
+    with c3:
+        if st.button("Generate + Send", use_container_width=True):
+            with st.spinner("Generating newsletter..."):
+                ok_generate, output_generate = run_command([sys.executable, "main.py"])
+
+            if not ok_generate:
+                st.session_state["last_action_ok"] = False
+                st.session_state["last_action_output"] = output_generate
+                st.error("Generation failed. Email not sent.")
+            elif not Path("send_newsletter.py").exists():
+                st.error("send_newsletter.py not found in project root.")
+            else:
+                with st.spinner("Sending email..."):
+                    ok_send, output_send = run_command([sys.executable, "send_newsletter.py"])
+
+                st.session_state["last_action_ok"] = ok_send
+                st.session_state["last_action_output"] = output_send
+
+                if ok_send:
+                    st.success("Generated and sent successfully.")
+                else:
+                    st.error("Generated, but email failed.")
+
+    st.divider()
+
+    status_rows = [
+        {
+            "file": str(NEWSLETTER_HTML_PATH),
+            "exists": NEWSLETTER_HTML_PATH.exists(),
+            "size_bytes": NEWSLETTER_HTML_PATH.stat().st_size if NEWSLETTER_HTML_PATH.exists() else 0,
+        },
+        {
+            "file": str(NEWSLETTER_TEXT_PATH),
+            "exists": NEWSLETTER_TEXT_PATH.exists(),
+            "size_bytes": NEWSLETTER_TEXT_PATH.stat().st_size if NEWSLETTER_TEXT_PATH.exists() else 0,
+        },
+    ]
+
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+
+    with st.expander("Last Command Output", expanded=st.session_state.get("last_action_ok") is False):
+        st.code(st.session_state.get("last_action_output", "") or "No output yet.")
+
+
+def render_preview() -> None:
+    st.markdown("### HTML Preview")
+
+    if NEWSLETTER_HTML_PATH.exists():
+        html = NEWSLETTER_HTML_PATH.read_text(encoding="utf-8", errors="ignore")
+        st.components.v1.html(html, height=920, scrolling=True)
+
+        st.download_button(
+            "Download HTML",
+            data=html,
+            file_name="latest_newsletter.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+    else:
+        st.warning("No HTML newsletter found yet. Generate the newsletter first.")
+
+
+def render_files(portfolio_path: Path) -> None:
+    st.markdown("### Files / CSV")
+
+    st.markdown("#### Portfolio CSV")
+    if portfolio_path.exists():
+        st.code(portfolio_path.read_text(), language="csv")
+    else:
+        st.warning("Portfolio file does not exist yet. Save once to create it.")
+
+    st.divider()
+    st.markdown("#### Text Newsletter")
+
+    if NEWSLETTER_TEXT_PATH.exists():
+        st.text_area(
+            "latest_newsletter.txt",
+            value=NEWSLETTER_TEXT_PATH.read_text(encoding="utf-8", errors="ignore"),
+            height=500,
+        )
+    else:
+        st.warning("No text newsletter found yet.")
+
+
+def render_factors() -> None:
+    st.markdown("### Cumulative Attribution + Factor Engine")
+    st.caption("Attribution comes from SQLite history. Factor scores use price history, benchmark relative strength, earnings dates, and SEC flags.")
+
+    st.markdown("#### Cumulative Attribution")
+
+    window = st.selectbox("Attribution window", ["All history", "7 days", "30 days", "90 days"], index=0)
+
+    days = None
+    if window == "7 days":
+        days = 7
+    elif window == "30 days":
+        days = 30
+    elif window == "90 days":
+        days = 90
+
+    attr = cumulative_attribution(days=days)
+
+    if attr.empty:
+        st.warning("No attribution history found yet. Generate a few newsletters to build attribution history.")
+    else:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            best = attr.iloc[0]
+            st.metric("Top Creator", best["ticker"], f"${best['cumulative_daily_pl']:,.2f}")
+        with c2:
+            worst = attr.sort_values("cumulative_daily_pl").iloc[0]
+            st.metric("Top Destroyer", worst["ticker"], f"${worst['cumulative_daily_pl']:,.2f}")
+        with c3:
+            st.metric("Tracked Holdings", len(attr))
+
+        st.bar_chart(attr.set_index("ticker")[["cumulative_daily_pl"]].rename(columns={"cumulative_daily_pl": "Cumulative Daily P/L ($)"}), height=320)
+        st.dataframe(_format_table_for_display(attr), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("#### Current Factor Signals")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.earnings import get_upcoming_earnings
+        from app.data.sec_filings import get_sec_filings
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [holding.ticker for holding in holdings]
+
+        earnings = get_upcoming_earnings(tickers, days_ahead=30)
+        sec = get_sec_filings(tickers, lookback_days=30, max_filings_per_ticker=3)
+
+        signals = build_factor_signals(tickers, earnings_calendar=earnings, sec_filings=sec)
+        factor_df = pd.DataFrame([signal.__dict__ for signal in signals])
+
+        if factor_df.empty:
+            st.warning("No factor signals generated.")
+        else:
+            st.bar_chart(factor_df.set_index("ticker")[["composite_score"]].rename(columns={"composite_score": "Composite Score (0-100)"}), height=320)
+            st.dataframe(_format_table_for_display(factor_df), use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Factor engine failed: {exc}")
+
+def render_alerts() -> None:
+    st.markdown("### Alert Engine")
+    st.caption("Alerts are generated from drawdowns, SEC Item 5.02 filings, earnings proximity, regime shifts, and large position moves.")
+
+    summary = alert_summary()
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Total Alerts", summary.get("total_alerts", 0))
+    with c2:
+        st.metric("Unresolved", summary.get("unresolved_alerts", 0))
+    with c3:
+        st.metric("High Severity", summary.get("high_severity_alerts", 0))
+    with c4:
+        st.metric("Latest Alert", summary.get("latest_alert_at") or "N/A")
+
+    st.divider()
+    unresolved_only = st.toggle("Show unresolved only", value=False)
+    alerts = pd.DataFrame(latest_alerts(limit=250, unresolved_only=unresolved_only))
+
+    if alerts.empty:
+        st.warning("No alerts have been generated yet. Run the newsletter once after installing the alert engine.")
+        return
+
+    st.dataframe(_format_table_for_display(alerts), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("#### Alert Counts by Type")
+    if "alert_type" in alerts.columns:
+        counts = alerts.groupby("alert_type").size().reset_index(name="count")
+        st.bar_chart(counts.set_index("alert_type")["count"], height=320)
+
+def render_construction() -> None:
+    st.markdown("### Portfolio Construction Engine")
+    st.caption("Internal advanced portfolio construction workflow. Hidden from the main published navigation.")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.market_data import get_equity_snapshot
+        from app.data.earnings import get_upcoming_earnings
+        from app.data.sec_filings import get_sec_filings
+        from app.data.factor_engine import build_factor_signals
+        from app.data.portfolio_construction import build_portfolio_construction, ConstructionConfig
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [holding.ticker for holding in holdings]
+
+        snapshot_raw = get_equity_snapshot(holdings)
+        snapshot = [item.__dict__ if hasattr(item, "__dict__") else item for item in snapshot_raw]
+
+        earnings = get_upcoming_earnings(tickers, days_ahead=30)
+        sec = get_sec_filings(tickers, lookback_days=30, max_filings_per_ticker=3)
+        factors = build_factor_signals(tickers, earnings_calendar=earnings, sec_filings=sec)
+        factor_dicts = [item.__dict__ for item in factors]
+
+        st.markdown("#### Construction Settings")
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            max_pos = st.slider("Max Position Weight", 5, 40, 22, 1) / 100.0
+
+        with c2:
+            max_sector = st.slider("Max Sector Weight", 20, 70, 40, 1) / 100.0
+
+        with c3:
+            min_pos = st.slider("Min Position Weight", 0, 10, 2, 1) / 100.0
+
+        with c4:
+            rebalance_threshold = st.slider("Rebalance Threshold", 1, 10, 3, 1) / 100.0
+
+        config = ConstructionConfig(
+            max_position_weight=max_pos,
+            max_sector_weight=max_sector,
+            min_position_weight=min_pos,
+            rebalance_threshold=rebalance_threshold,
+        )
+
+        construction = build_portfolio_construction(snapshot, factor_dicts, config=config)
+
+        if construction.get("status") != "Ready":
+            st.warning(construction.get("message", "Portfolio construction unavailable."))
+            return
+
+        summary = construction.get("summary", {})
+
+        st.divider()
+        st.markdown("#### Construction Summary")
+
+        m1, m2, m3, m4 = st.columns(4)
+
+        with m1:
+            st.metric("Portfolio Value", f"${summary.get('portfolio_value', 0):,.2f}")
+
+        with m2:
+            st.metric("Rebalance Trades", summary.get("rebalance_trades", 0))
+
+        with m3:
+            st.metric("Est. Portfolio Vol", f"{summary.get('estimated_portfolio_volatility_pct', 0):.2f}%")
+
+        with m4:
+            st.metric("Turnover", f"{summary.get('turnover_pct', 0):.2f}%")
+
+        targets = pd.DataFrame(construction.get("targets", []))
+        trades = pd.DataFrame(construction.get("trades", []))
+        sectors = pd.DataFrame(construction.get("sector_targets", []))
+
+        st.divider()
+        st.markdown("#### Current vs Target Weights")
+
+        if not targets.empty:
+            chart_df = targets[["ticker", "current_weight_pct", "target_weight_pct"]].set_index("ticker")
+            st.bar_chart(_format_chart_for_display(chart_df), height=340)
+            st.dataframe(_format_table_for_display(targets), use_container_width=True, hide_index=True)
+        else:
+            st.warning("No target weights generated.")
+
+        st.divider()
+        st.markdown("#### Rebalance Suggestions")
+
+        if trades.empty:
+            st.success("No rebalance trades exceed the configured threshold.")
+        else:
+            st.dataframe(_format_table_for_display(trades), use_container_width=True, hide_index=True)
+
+            if st.button("Save Rebalance Recommendations", type="primary"):
+                saved_count = save_rebalance_recommendations(construction.get("trades", []))
+                st.success(f"Saved {saved_count} pending rebalance recommendation(s) to the execution layer.")
+
+        st.divider()
+        st.markdown("#### Sector Constraint View")
+
+        if not sectors.empty:
+            sector_chart = sectors[["sector", "current_weight_pct", "target_weight_pct"]].set_index("sector")
+            st.bar_chart(_format_chart_for_display(sector_chart), height=320)
+            st.dataframe(_format_table_for_display(sectors), use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Portfolio construction engine failed: {exc}")
+
+def render_execution() -> None:
+    st.markdown("### Execution Layer")
+    st.caption("Internal advanced execution workflow. Hidden from the main published navigation.")
+
+    try:
+        from app.data.execution_engine import (
+            init_execution_tables,
+            execution_summary,
+            latest_recommendations,
+            approve_recommendation,
+            reject_recommendation,
+            paper_trade_ledger,
+            execution_audit_trail,
+            set_cash_balance,
+        )
+
+        init_execution_tables()
+        summary = execution_summary()
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Pending Recommendations", summary.get("pending_recommendations", 0))
+        with c2:
+            st.metric("Paper Trades", summary.get("paper_trades", 0))
+        with c3:
+            st.metric("Paper Traded Value", f"${summary.get('total_paper_traded_value', 0):,.2f}")
+        with c4:
+            st.metric("Simulated Cash", f"${summary.get('cash_balance', 0):,.2f}")
+
+        st.divider()
+
+        with st.expander("Cash Settings", expanded=False):
+            new_cash = st.number_input(
+                "Set simulated cash balance",
+                value=float(summary.get("cash_balance", 0.0)),
+                step=100.0,
+            )
+            if st.button("Update Cash Balance"):
+                set_cash_balance(float(new_cash))
+                st.success("Cash balance updated.")
+                st.rerun()
+
+        st.markdown("#### Pending Rebalance Recommendations")
+        pending = pd.DataFrame(latest_recommendations(status="Pending", limit=100))
+
+        if pending.empty:
+            st.info("No pending rebalance recommendations. Save recommendations from the Construction page first.")
+        else:
+            display_cols = [
+                "id", "created_at", "ticker", "action", "sector",
+                "current_weight_pct", "target_weight_pct", "weight_drift_pct",
+                "trade_value", "composite_score", "signal_label"
+            ]
+            display_cols = [c for c in display_cols if c in pending.columns]
+            clean_pending = pending[display_cols].copy()
+            clean_pending = clean_pending.rename(columns={
+                "id": "Recommendation ID",
+                "created_at": "Created At",
+                "ticker": "Ticker",
+                "action": "Action",
+                "sector": "Sector",
+                "current_weight_pct": "Current Weight (%)",
+                "target_weight_pct": "Target Weight (%)",
+                "weight_drift_pct": "Weight Drift (%)",
+                "trade_value": "Trade Value ($)",
+                "composite_score": "Composite Score (0-100)",
+                "signal_label": "Signal Label",
+            })
+
+            for col in ["Current Weight (%)", "Target Weight (%)", "Weight Drift (%)"]:
+                if col in clean_pending.columns:
+                    clean_pending[col] = clean_pending[col].map(lambda x: f"{float(x):+.2f}%")
+
+            if "Trade Value ($)" in clean_pending.columns:
+                clean_pending["Trade Value ($)"] = clean_pending["Trade Value ($)"].map(lambda x: f"${float(x):,.2f}")
+
+            if "Composite Score (0-100)" in clean_pending.columns:
+                clean_pending["Composite Score (0-100)"] = clean_pending["Composite Score (0-100)"].map(lambda x: f"{float(x):.1f}/100")
+
+            if "Created At" in clean_pending.columns:
+                clean_pending["Created At"] = clean_pending["Created At"].astype(str).str.slice(0, 19)
+
+            st.dataframe(clean_pending, use_container_width=True, hide_index=True)
+
+            st.markdown("#### Decision")
+            rec_ids = pending["id"].astype(int).tolist()
+            selected_id = st.selectbox("Recommendation ID", rec_ids)
+
+            selected_row = pending[pending["id"] == selected_id].iloc[0]
+            selected_action = str(selected_row.get("action", "")).upper()
+            selected_ticker = selected_row.get("ticker", "")
+            selected_trade_value = float(selected_row.get("trade_value", 0) or 0)
+            current_cash = float(summary.get("cash_balance", 0.0) or 0.0)
+
+            st.markdown("#### Selected Recommendation")
+            s1, s2, s3, s4 = st.columns(4)
+
+            with s1:
+                st.metric("Ticker", selected_ticker)
+
+            with s2:
+                st.metric("Action", selected_action)
+
+            with s3:
+                st.metric("Trade Value", f"${selected_trade_value:,.2f}")
+
+            with s4:
+                cash_after = current_cash - abs(selected_trade_value) if selected_action == "BUY" else current_cash + abs(selected_trade_value)
+                st.metric("Cash After Approval", f"${cash_after:,.2f}")
+
+            if selected_action == "BUY" and current_cash < abs(selected_trade_value):
+                st.warning("This BUY would exceed simulated cash. You can still approve it, but simulated cash will go negative.")
+
+            note = st.text_input("Decision note", value="")
+            simulated_price = st.number_input("Optional simulated execution price", min_value=0.0, value=0.0, step=1.0)
+
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("Approve Selected Recommendation", type="primary"):
+                    approve_recommendation(
+                        int(selected_id),
+                        note=note,
+                        simulated_price=simulated_price if simulated_price > 0 else None,
+                    )
+                    st.success(f"Approved recommendation {selected_id}.")
+                    st.rerun()
+
+            with b2:
+                if st.button("Reject Selected Recommendation"):
+                    reject_recommendation(int(selected_id), note=note)
+                    st.warning(f"Rejected recommendation {selected_id}.")
+                    st.rerun()
+
+        st.divider()
+
+        st.markdown("#### Paper Trade Ledger")
+        trades = pd.DataFrame(paper_trade_ledger(limit=250))
+        if trades.empty:
+            st.info("No paper trades executed yet.")
+        else:
+            st.dataframe(_format_table_for_display(trades), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        st.markdown("#### Execution Audit Trail")
+        audit = pd.DataFrame(execution_audit_trail(limit=250))
+        if audit.empty:
+            st.info("No execution audit events yet.")
+        else:
+            st.dataframe(_format_table_for_display(audit), use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Execution layer failed: {exc}")
+
+def render_backtesting() -> None:
+    st.markdown("### Backtesting Engine V1")
+    st.caption("Internal advanced backtesting workflow. Hidden from the main published navigation.")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.backtesting_engine import run_backtest, BacktestConfig
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [holding.ticker for holding in holdings]
+
+        st.markdown("#### Backtest Settings")
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            benchmark = st.text_input("Benchmark", value="SPY")
+        with c2:
+            lookback_days = st.slider("Lookback Days", 90, 365, 180, 15)
+        with c3:
+            rebalance_frequency = st.slider("Rebalance Frequency (Days)", 5, 63, 21, 1)
+        with c4:
+            transaction_cost_bps = st.slider("Transaction Cost (bps)", 0, 50, 10, 1)
+
+        initial_capital = st.number_input("Initial Capital ($)", min_value=1000.0, value=10000.0, step=1000.0)
+
+        config = BacktestConfig(
+            benchmark=benchmark.upper().strip(),
+            lookback_days=int(lookback_days),
+            rebalance_frequency_days=int(rebalance_frequency),
+            transaction_cost_bps=float(transaction_cost_bps),
+            initial_capital=float(initial_capital),
+        )
+
+        if st.button("Run Backtest", type="primary"):
+            with st.spinner("Running rolling rebalance backtest..."):
+                st.session_state["latest_backtest"] = run_backtest(tickers, config=config)
+
+        result = st.session_state.get("latest_backtest")
+
+        if not result:
+            st.info("Click Run Backtest to simulate the construction engine historically.")
+            return
+
+        if result.get("status") != "Ready":
+            st.warning(result.get("message", "Backtest unavailable."))
+            return
+
+        metrics = result.get("metrics", {})
+
+        st.divider()
+        st.markdown("#### Performance Summary")
+
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("Strategy Return", f"{metrics.get('strategy_total_return_pct', 0):+.2f}%")
+        with m2:
+            st.metric("Benchmark Return", f"{metrics.get('benchmark_total_return_pct', 0):+.2f}%")
+        with m3:
+            st.metric("Active Return", f"{metrics.get('active_return_pct', 0):+.2f}%")
+        with m4:
+            st.metric("Max Drawdown", f"{metrics.get('max_drawdown_pct', 0):+.2f}%")
+
+        r1, r2, r3, r4 = st.columns(4)
+        with r1:
+            st.metric("Sharpe Ratio", f"{metrics.get('sharpe_ratio', 0):.2f}")
+        with r2:
+            st.metric("Sortino Ratio", f"{metrics.get('sortino_ratio', 0):.2f}")
+        with r3:
+            st.metric("Beta to Benchmark", f"{metrics.get('beta_to_benchmark', 0):.2f}")
+        with r4:
+            st.metric("Annualized Alpha", f"{metrics.get('annualized_alpha_pct', 0):+.2f}%")
+
+        t1, t2, t3 = st.columns(3)
+        with t1:
+            st.metric("Avg Turnover", f"{metrics.get('avg_turnover_pct', 0):.2f}%")
+        with t2:
+            st.metric("Transaction Costs", f"${metrics.get('total_transaction_cost_$', 0):,.2f}")
+        with t3:
+            st.metric("Rebalances", metrics.get("rebalance_count", 0))
+
+        st.divider()
+
+        st.markdown("#### Strategy vs Benchmark")
+        equity = pd.DataFrame(result.get("equity_curve", []))
+        if not equity.empty:
+            chart = equity.set_index("date")[["strategy_value", "benchmark_value"]].rename(columns={
+                "strategy_value": "Strategy Value ($)",
+                "benchmark_value": "Benchmark Value ($)",
+            })
+            st.line_chart(chart, height=360)
+            st.dataframe(_format_table_for_display(equity), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        st.markdown("#### Turnover and Transaction Costs")
+        turnover = pd.DataFrame(result.get("turnover", []))
+        if turnover.empty:
+            st.info("No rebalance events occurred in this window.")
+        else:
+            turnover_chart = turnover.set_index("date")[["turnover_pct"]].rename(columns={"turnover_pct": "Turnover (%)"})
+            st.bar_chart(turnover_chart, height=300)
+            st.dataframe(_format_table_for_display(turnover), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        st.markdown("#### Factor Contribution Over Time")
+        factor_contribution = pd.DataFrame(result.get("factor_contribution", []))
+        if factor_contribution.empty:
+            st.info("No factor contribution history generated yet.")
+        else:
+            factor_chart = factor_contribution.set_index("ticker")[[
+                "avg_composite_score",
+                "avg_momentum_score",
+                "avg_volatility_score",
+                "avg_relative_strength_score",
+                "avg_drawdown_score",
+            ]].rename(columns={
+                "avg_composite_score": "Avg Composite Score (0-100)",
+                "avg_momentum_score": "Avg Momentum Score (0-100)",
+                "avg_volatility_score": "Avg Volatility Score (0-100)",
+                "avg_relative_strength_score": "Avg Relative Strength Score (0-100)",
+                "avg_drawdown_score": "Avg Drawdown Score (0-100)",
+            })
+            st.bar_chart(factor_chart, height=360)
+            st.dataframe(_format_table_for_display(factor_contribution), use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Backtesting engine failed: {exc}")
+
+def render_monitor() -> None:
+    st.markdown("### Portfolio Diagnostics & Surveillance")
+    st.caption("Market movements, exposures, catalysts, SEC filings, volume anomalies, and portfolio drift.")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.earnings import get_upcoming_earnings
+        from app.data.sec_filings import get_sec_filings
+        from app.data.holdings_monitor import build_holdings_change_monitor
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [holding.ticker for holding in holdings]
+
+        benchmark = st.text_input("Benchmark", value="SPY").upper().strip()
+
+        with st.spinner("Loading factual holdings monitor..."):
+            earnings = get_upcoming_earnings(tickers, days_ahead=45)
+            sec = get_sec_filings(tickers, lookback_days=45, max_filings_per_ticker=3)
+            result = build_holdings_change_monitor(
+                holdings,
+                earnings_calendar=earnings,
+                sec_filings=sec,
+                benchmark=benchmark,
+            )
+
+        if result.get("status") != "Ready":
+            st.warning(result.get("message", "Monitor unavailable."))
+            return
+
+        holdings_df = pd.DataFrame(result.get("holdings", []))
+        exposure = result.get("exposure", {})
+
+        st.divider()
+        st.markdown("#### Portfolio Exposure Dashboard")
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            st.metric("Total Value", f"${exposure.get('total_value', 0):,.2f}")
+
+        with c2:
+            st.metric("Largest Position", f"{exposure.get('single_name_concentration_pct', 0):.2f}%")
+
+        with c3:
+            st.metric("Top 3 Concentration", f"{exposure.get('top_3_concentration_pct', 0):.2f}%")
+
+        with c4:
+            st.metric("Portfolio Beta", f"{exposure.get('portfolio_beta', 0):.2f}")
+
+        e1, e2 = st.columns(2)
+
+        with e1:
+            sector_df = pd.DataFrame(exposure.get("sector_exposure", []))
+            st.markdown("##### Sector Exposure")
+            if not sector_df.empty:
+                chart = sector_df.set_index("sector")[["weight_pct"]].rename(columns={"weight_pct": "Weight (%)"})
+                st.bar_chart(chart, height=280)
+                st.dataframe(_format_table_for_display(sector_df), use_container_width=True, hide_index=True)
+
+        with e2:
+            cap_df = pd.DataFrame(exposure.get("market_cap_exposure", []))
+            st.markdown("##### Market Cap Exposure")
+            if not cap_df.empty:
+                chart = cap_df.set_index("market_cap_tier")[["weight_pct"]].rename(columns={"weight_pct": "Weight (%)"})
+                st.bar_chart(chart, height=280)
+                st.dataframe(_format_table_for_display(cap_df), use_container_width=True, hide_index=True)
+
+        e3, e4 = st.columns(2)
+
+        with e3:
+            style_df = pd.DataFrame(exposure.get("style_exposure", []))
+            st.markdown("##### Growth / Value Tilt")
+            if not style_df.empty:
+                chart = style_df.set_index("style")[["weight_pct"]].rename(columns={"weight_pct": "Weight (%)"})
+                st.bar_chart(chart, height=280)
+                st.dataframe(_format_table_for_display(style_df), use_container_width=True, hide_index=True)
+
+        with e4:
+            region_df = pd.DataFrame(exposure.get("region_exposure", []))
+            st.markdown("##### Geographic Exposure")
+            if not region_df.empty:
+                chart = region_df.set_index("region")[["weight_pct"]].rename(columns={"weight_pct": "Weight (%)"})
+                st.bar_chart(chart, height=280)
+                st.dataframe(_format_table_for_display(region_df), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("#### Holdings Diagnostics")
+
+        if holdings_df.empty:
+            st.info("No holdings monitor rows available.")
+            return
+
+        display_cols = [
+            "ticker",
+            "sector",
+            "sector_etf",
+            "portfolio_weight_pct",
+            "latest_price",
+            "market_value",
+            "daily_move_pct",
+            "weekly_move_pct",
+            "weekly_vs_spy_pct",
+            "weekly_vs_sector_etf_pct",
+            "earnings_proximity",
+            "recent_sec_filing",
+            "volume_vs_30d_avg",
+            "distance_from_52w_high_pct",
+            "drawdown_from_63d_high_pct",
+            "market_cap_tier",
+            "style",
+            "beta",
+            "region",
+        ]
+        display_cols = [c for c in display_cols if c in holdings_df.columns]
+
+        clean = holdings_df[display_cols].rename(columns={
+            "ticker": "Ticker",
+            "sector": "Sector",
+            "sector_etf": "Sector ETF",
+            "portfolio_weight_pct": "Portfolio Weight (%)",
+            "latest_price": "Latest Price ($)",
+            "market_value": "Market Value ($)",
+            "daily_move_pct": "Daily Move (%)",
+            "weekly_move_pct": "Weekly Move (%)",
+            "weekly_vs_spy_pct": "Weekly vs SPY (%)",
+            "weekly_vs_sector_etf_pct": "Weekly vs Sector ETF (%)",
+            "earnings_proximity": "Earnings Proximity",
+            "recent_sec_filing": "Recent SEC Filing",
+            "volume_vs_30d_avg": "Volume vs 30D Avg (x)",
+            "distance_from_52w_high_pct": "Distance from 52W High (%)",
+            "drawdown_from_63d_high_pct": "Drawdown from 63D High (%)",
+            "market_cap_tier": "Market Cap Tier",
+            "style": "Growth / Value",
+            "beta": "Beta",
+            "region": "Region",
+        })
+
+        for col in [
+            "Portfolio Weight (%)",
+            "Daily Move (%)",
+            "Weekly Move (%)",
+            "Weekly vs SPY (%)",
+            "Weekly vs Sector ETF (%)",
+            "Distance from 52W High (%)",
+            "Drawdown from 63D High (%)",
+        ]:
+            if col in clean.columns:
+                clean[col] = clean[col].map(lambda x: "" if pd.isna(x) else f"{float(x):+.2f}%")
+
+        for col in ["Latest Price ($)", "Market Value ($)"]:
+            if col in clean.columns:
+                clean[col] = clean[col].map(lambda x: "" if pd.isna(x) else f"${float(x):,.2f}")
+
+        if "Volume vs 30D Avg (x)" in clean.columns:
+            clean["Volume vs 30D Avg (x)"] = clean["Volume vs 30D Avg (x)"].map(lambda x: "" if pd.isna(x) else f"{float(x):.2f}x")
+
+        if "Beta" in clean.columns:
+            clean["Beta"] = clean["Beta"].map(lambda x: "" if pd.isna(x) else f"{float(x):.2f}")
+
+        st.dataframe(clean, use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Holdings monitor failed: {exc}")
+
+def render_market_workbench() -> None:
+    st.markdown("### Market Workbench")
+    st.caption("Facts-first investor tools: catalysts, SEC filing changes, watchlist monitoring, portfolio drift, and macro dashboard.")
+
+    try:
+        from app.config.portfolio import load_portfolio
+        from app.config.settings import settings
+        from app.data.earnings import get_upcoming_earnings
+        from app.data.sec_filings import get_sec_filings
+        from app.data.market_workbench import catalyst_calendar, sec_diff, watchlist_monitor, portfolio_drift, macro_dashboard, exposure_dashboard
+
+        holdings = load_portfolio(settings.portfolio_file)
+        tickers = [h.ticker for h in holdings]
+        watchlist_raw = st.text_input("Watchlist tickers, comma-separated", value="MSFT, GOOGL, META, TSLA, JPM")
+        watchlist = [x.strip().upper() for x in watchlist_raw.split(",") if x.strip()]
+        days = st.slider("Catalyst Calendar Window (days)", 7, 45, 14, 1)
+
+        with st.spinner("Loading factual market workbench..."):
+            all_tickers = sorted(set(tickers + watchlist))
+            earnings = get_upcoming_earnings(all_tickers, days_ahead=45)
+            sec = get_sec_filings(all_tickers, lookback_days=45, max_filings_per_ticker=3)
+            catalysts = pd.DataFrame(catalyst_calendar(tickers, earnings, sec, days))
+            sec_rows = pd.DataFrame(sec_diff(sec))
+            watch = pd.DataFrame(watchlist_monitor(watchlist, earnings, sec))
+            drift = pd.DataFrame(portfolio_drift(holdings))
+            macro = macro_dashboard()
+            exposure = exposure_dashboard(holdings)
+
+        tabs = st.tabs(["What Matters This Week", "SEC Filing Diff Tracker", "Watchlist", "Portfolio Drift", "Macro Dashboard", "Exposure"])
+
+        with tabs[0]:
+            st.markdown("#### Earnings & Catalyst Calendar")
+            st.dataframe(_format_table_for_display(catalysts), use_container_width=True, hide_index=True)
+
+        with tabs[1]:
+            st.markdown("#### SEC Filing Diff Tracker")
+            st.caption("Tracked factual language categories from recent filings. No recommendation layer.")
+            st.dataframe(_format_table_for_display(sec_rows), use_container_width=True, hide_index=True)
+
+        with tabs[2]:
+            st.markdown("#### Watchlist Intelligence")
+            st.dataframe(_format_table_for_display(watch), use_container_width=True, hide_index=True)
+
+        with tabs[3]:
+            st.markdown("#### Portfolio Drift Monitor")
+            if not drift.empty:
+                chart = drift.set_index("Ticker")[["Current Weight (%)", "Target Weight (%)"]]
+                st.bar_chart(chart, height=320)
+            st.dataframe(_format_table_for_display(drift), use_container_width=True, hide_index=True)
+
+        with tabs[4]:
+            st.markdown("#### Macro Dashboard")
+            indicators = pd.DataFrame(macro.get("Indicators", []))
+            sectors = pd.DataFrame(macro.get("Sector Leadership", []))
+            missing = pd.DataFrame(macro.get("Not Yet Connected", []))
+            st.markdown("##### Key Market Indicators")
+            st.dataframe(_format_table_for_display(indicators), use_container_width=True, hide_index=True)
+            st.markdown("##### Sector Leadership")
+            if not sectors.empty:
+                st.bar_chart(sectors.set_index("Sector")[["Weekly Move (%)"]], height=320)
+            st.dataframe(_format_table_for_display(sectors), use_container_width=True, hide_index=True)
+            st.markdown("##### Not Yet Connected")
+            st.dataframe(missing, use_container_width=True, hide_index=True)
+
+        with tabs[5]:
+            st.markdown("#### Portfolio Exposure Dashboard")
+            if exposure:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Total Value", f"${exposure.get('Total Value ($)', 0):,.2f}")
+                c2.metric("Largest Position", f"{exposure.get('Largest Position (%)', 0):.2f}%")
+                c3.metric("Top 3 Concentration", f"{exposure.get('Top 3 Concentration (%)', 0):.2f}%")
+                c4.metric("Portfolio Beta", f"{exposure.get('Portfolio Beta', 0):.2f}")
+
+                for label in ["Sector Exposure", "Market Cap Exposure", "Style Exposure", "Region Exposure"]:
+                    st.markdown(f"##### {label}")
+                    df = pd.DataFrame(exposure.get(label, []))
+                    if not df.empty:
+                        idx_col = df.columns[0]
+                        st.bar_chart(df.set_index(idx_col)[["Weight (%)"]], height=260)
+                        st.dataframe(_format_table_for_display(df), use_container_width=True, hide_index=True)
+
+    except Exception as exc:
+        st.error(f"Market Workbench failed: {exc}")
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Daily Portfolio Brief",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    st.markdown(APP_CSS, unsafe_allow_html=True)
+    init_state()
+    page = render_sidebar()
+
+    portfolio_path = Path(st.session_state["portfolio_path"])
+    df = load_portfolio(portfolio_path)
+
+    render_header()
+    st.divider()
+
+    if page == "Overview":
+        render_overview(df, portfolio_path)
+    elif page == "Portfolio":
+        render_portfolio(df, portfolio_path)
+    elif page == "Monitor":
+        render_monitor()
+    elif page == "Market Workbench":
+        render_market_workbench()
+    elif page == "Construction":
+        render_construction()
+    elif page == "Backtesting":
+        render_backtesting()
+    elif page == "Execution":
+        render_execution()
+    elif page == "Analytics":
+        render_analytics(df)
+    elif page == "Newsletter":
+        render_newsletter_actions()
+    elif page == "Preview":
+        render_preview()
+    elif page == "Files":
+        render_files(portfolio_path)
+    elif page == "Factors":
+        render_factors()
+    elif page == "Alerts":
+        render_alerts()
+
+
+if __name__ == "__main__":
+    main()

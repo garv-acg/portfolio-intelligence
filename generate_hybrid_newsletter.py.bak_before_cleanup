@@ -1,0 +1,888 @@
+"""
+generate_hybrid_newsletter.py
+─────────────────────────────
+Single newsletter pipeline.  Run directly:
+    python generate_hybrid_newsletter.py
+
+Or called via the control centre "Generate Newsletter" button (which runs
+main.py, which in turn calls build_and_save_newsletter() below).
+
+Design rules
+────────────
+- source_rank is used INTERNALLY for headline selection only.
+  It is NEVER rendered in any output table or paragraph.
+- No analyst opinions, price targets, or valuation commentary.
+- No AI-generated investment conclusions.
+- Facts, filings, catalysts, macro releases only.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from pathlib import Path
+import json
+import html
+import pandas as pd
+
+from app.data.earnings import get_upcoming_earnings
+from app.data.sec_filings import get_sec_filings
+from app.data.alert_engine import latest_alerts
+from app.data.holdings_monitor import build_holdings_change_monitor
+from app.data.market_workbench import macro_dashboard
+from app.data.morning_brief_engine import build_morning_brief
+from app.data.news_feed import (
+    company_news,
+    market_news,
+    global_development_news as fetch_global_development_news,
+)
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+OUTPUT_DIR        = Path("output")
+USER_PORTFOLIO    = Path("data/users/demo/portfolio.csv")
+FALLBACK_PORTFOLIO = Path("portfolio.csv")
+MACRO_EVENTS_FILE = Path("data/macro_events.csv")
+PREFERENCES_FILE  = Path("data/users/demo/newsletter_preferences.json")
+
+# Set True to skip live news fetches during local testing
+FAST_TEST_MODE = False
+
+
+# ── Preferences ────────────────────────────────────────────────────────────────
+
+SECTION_DEFAULTS = {
+    "portfolio_snapshot":  True,
+    "visual_intelligence": True,
+    "top_movers":          True,
+    "portfolio_news":      True,
+    "market_update":       True,
+    "macro_snapshot":      True,
+    "economic_calendar":   True,
+    "earnings_calendar":   True,
+    "sec_monitoring":      True,
+    "alerts":              True,
+    "global_developments": True,
+}
+
+
+def load_preferences() -> dict:
+    prefs = SECTION_DEFAULTS.copy()
+    if not PREFERENCES_FILE.exists():
+        PREFERENCES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PREFERENCES_FILE.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+        return prefs
+    try:
+        prefs.update(json.loads(PREFERENCES_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return prefs
+
+
+def remove_disabled_sections(html_body: str, prefs: dict) -> str:
+    """Strip entire card blocks for any section the user has toggled off."""
+    section_headings = {
+        "portfolio_snapshot":  "Portfolio Snapshot",
+        "visual_intelligence": "Visual Intelligence",
+        "top_movers":          "Top Movers",
+        "portfolio_news":      "Portfolio News",
+        "market_update":       "Market Update",
+        "macro_snapshot":      "Macro Snapshot",
+        "economic_calendar":   "Economic Calendar",
+        "earnings_calendar":   "Earnings Calendar",
+        "sec_monitoring":      "SEC Monitoring",
+        "alerts":              "Alerts",
+        "global_developments": "Global Developments",
+    }
+    for key, heading in section_headings.items():
+        if prefs.get(key, True):
+            continue
+        marker      = f"<h2>{heading}</h2>"
+        marker_idx  = html_body.find(marker)
+        if marker_idx == -1:
+            continue
+        card_start  = html_body.rfind('<div class="card">', 0, marker_idx)
+        next_card   = html_body.find('<div class="card">', marker_idx + len(marker))
+        footer      = html_body.find('<div class="footer">', marker_idx + len(marker))
+        ends        = [x for x in [next_card, footer] if x != -1]
+        if card_start == -1 or not ends:
+            continue
+        html_body = html_body[:card_start] + html_body[min(ends):]
+    return html_body
+
+
+# ── Portfolio ──────────────────────────────────────────────────────────────────
+
+class Holding:
+    def __init__(self, ticker, shares, cost_basis=0):
+        self.ticker     = str(ticker).upper().strip()
+        self.shares     = float(shares or 0)
+        self.cost_basis = float(cost_basis or 0)
+
+
+def load_portfolio() -> list[Holding]:
+    path = USER_PORTFOLIO if USER_PORTFOLIO.exists() else FALLBACK_PORTFOLIO
+    df   = pd.read_csv(path)
+    return [
+        Holding(
+            ticker=row.get("ticker", ""),
+            shares=row.get("shares", 0),
+            cost_basis=row.get("cost_basis", 0),
+        )
+        for _, row in df.iterrows()
+    ]
+
+
+# ── Macro events CSV ───────────────────────────────────────────────────────────
+
+_MACRO_SAMPLE = [
+    {"event": "CPI Inflation",     "release_date": "2026-06-10", "time": "8:30 AM ET",  "importance": "High",   "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "BLS",                     "source_url": "https://www.bls.gov/schedule/news_release/cpi.htm"},
+    {"event": "FOMC Rate Decision","release_date": "2026-06-17", "time": "2:00 PM ET",  "importance": "High",   "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "Federal Reserve",          "source_url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"},
+    {"event": "Jobs Report",       "release_date": "2026-06-05", "time": "8:30 AM ET",  "importance": "High",   "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "BLS",                     "source_url": "https://www.bls.gov/schedule/news_release/empsit.htm"},
+    {"event": "PCE Inflation",     "release_date": "2026-05-29", "time": "8:30 AM ET",  "importance": "High",   "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "BEA",                     "source_url": "https://www.bea.gov/news/schedule"},
+    {"event": "Retail Sales",      "release_date": "2026-06-17", "time": "8:30 AM ET",  "importance": "Medium", "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "Census Bureau",           "source_url": "https://www.census.gov/economic-indicators/"},
+    {"event": "Fed Funds Probability","release_date": "Daily",   "time": "Market hours","importance": "Medium", "actual": "", "expected": "", "prior": "", "last_updated": "", "source": "CME FedWatch",            "source_url": "https://www.cmegroup.com/markets/interest-rates/cme-fedwatch-tool.html"},
+]
+
+
+def ensure_macro_events_file() -> None:
+    MACRO_EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    sample = pd.DataFrame(_MACRO_SAMPLE)
+    if not MACRO_EVENTS_FILE.exists():
+        sample.to_csv(MACRO_EVENTS_FILE, index=False)
+        return
+    existing = pd.read_csv(MACRO_EVENTS_FILE).fillna("")
+    changed  = False
+    for col in sample.columns:
+        if col not in existing.columns:
+            existing[col] = ""
+            changed = True
+    existing_events = set(existing["event"].astype(str))
+    missing = sample[~sample["event"].astype(str).isin(existing_events)]
+    if not missing.empty:
+        existing = pd.concat([existing, missing], ignore_index=True)
+        changed  = True
+    if changed:
+        existing[list(sample.columns)].to_csv(MACRO_EVENTS_FILE, index=False)
+
+
+def load_macro_events() -> list[dict]:
+    ensure_macro_events_file()
+    df    = pd.read_csv(MACRO_EVENTS_FILE).fillna("")
+    today = date.today().isoformat()
+    rows  = []
+
+    for _, row in df.iterrows():
+        release_date = str(row.get("release_date", ""))
+        last_updated = str(row.get("last_updated", ""))
+        changed_today = release_date[:10] == today or last_updated[:10] == today
+
+        days_until = ""
+        try:
+            if release_date and release_date.lower() != "daily":
+                delta = (date.fromisoformat(release_date[:10]) - date.today()).days
+                if delta == 0:
+                    days_until = "Today"
+                elif delta > 0:
+                    days_until = f"{delta} day(s)"
+                else:
+                    days_until = f"{abs(delta)} day(s) ago"
+            elif release_date.lower() == "daily":
+                days_until = "Daily"
+        except Exception:
+            pass
+
+        rows.append({
+            "event":        row.get("event", ""),
+            "release_date": release_date or "Not set",
+            "time":         row.get("time", ""),
+            "days_until":   days_until,
+            "importance":   row.get("importance", ""),
+            "actual":       row.get("actual",   "N/A") or "N/A",
+            "expected":     row.get("expected", "N/A") or "N/A",
+            "prior":        row.get("prior",    "N/A") or "N/A",
+            "source":       row.get("source", ""),
+            "changed_today": changed_today,
+        })
+
+    def _sort_key(item):
+        if item.get("days_until") == "Today":
+            return -1
+        if item.get("release_date", "").lower() == "daily":
+            return 999
+        try:
+            return (date.fromisoformat(item["release_date"][:10]) - date.today()).days
+        except Exception:
+            return 999
+
+    return sorted(rows, key=_sort_key)
+
+
+# ── SEC normalisation ──────────────────────────────────────────────────────────
+
+def _sec_get(row, key, default=""):
+    return row.get(key, default) if isinstance(row, dict) else getattr(row, key, default)
+
+
+def _normalize_sec_rows(sec_filings: list) -> list[dict]:
+    cleaned, seen = [], set()
+    for row in sec_filings:
+        ticker = str(_sec_get(row, "ticker", "")).upper()
+        form   = _sec_get(row, "form_type") or _sec_get(row, "form") or ""
+        filed  = (
+            _sec_get(row, "filing_date") or _sec_get(row, "filingDate")
+            or _sec_get(row, "filed_at")  or _sec_get(row, "filedAt")
+            or _sec_get(row, "accepted_at") or _sec_get(row, "acceptedAt")
+            or _sec_get(row, "date") or _sec_get(row, "filed")
+            or _sec_get(row, "period_of_report") or _sec_get(row, "periodOfReport")
+            or ""
+        )
+        note = (
+            _sec_get(row, "signal_summary") or _sec_get(row, "factual_note")
+            or _sec_get(row, "signal_type") or ""
+        )
+        filing_date = str(filed)[:10] if filed else ""
+        key = (ticker, form, filing_date, note)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append({"Ticker": ticker, "Form": form, "Date": filing_date, "Factual Note": note})
+    return sorted(cleaned, key=lambda r: r.get("Date", ""), reverse=True)
+
+
+# ── Text utilities ─────────────────────────────────────────────────────────────
+
+# ── Text utilities ─────────────────────────────────────────────────────────────
+
+_MOJIBAKE = {
+    "\xe2\x80\x99": "'",
+    "\xe2\x80\x98": "'",
+    "\xe2\x80\x9c": "\u201c",
+    "\xe2\x80\x9d": "\u201d",
+    "\xe2\x80\x93": "\u2013",
+    "\xe2\x80\x94": "\u2014",
+    "\xe2\x80\xa2": "\u2022",
+    "\xc2\xa0": " ",
+    "\xc2": "",
+}
+
+
+def clean_text(value) -> str:
+    text = str(value if value is not None else "")
+    for bad, good in _MOJIBAKE.items():
+        text = text.replace(bad, good)
+    try:
+        if "â" in text or "Ã" in text:
+            text = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+    except Exception:
+        pass
+    return text
+
+
+def esc(value) -> str:
+    return html.escape(clean_text(value))
+
+
+def pct(value) -> str:
+    try:
+        return f"{float(value):+.2f}%"
+    except Exception:
+        return "N/A"
+
+
+def money(value) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except Exception:
+        return "N/A"
+
+
+def number(value) -> str:
+    try:
+        return f"{float(value):,.2f}"
+    except Exception:
+        return str(value)
+
+
+# ── Headline selection (source_rank used internally only) ──────────────────────
+
+def _select_headline_row(company_rows: list[dict], market_rows: list[dict]) -> dict:
+    rows = company_rows + market_rows
+    if not rows:
+        return {"ticker": "", "title": "No major headline found from approved sources.", "source": "N/A"}
+    return sorted(
+        rows,
+        key=lambda r: (int(r.get("source_rank", 0) or 0), str(r.get("published", ""))),
+        reverse=True,
+    )[0]
+
+
+# ── HTML rendering helpers ─────────────────────────────────────────────────────
+
+def render_move_pill(value: str) -> str:
+    val = str(value)
+    cls = "move-pill"
+    if val.startswith("+"):
+        cls += " move-positive"
+    elif val.startswith("-"):
+        cls += " move-negative"
+    return f'<span class="{cls}">{esc(val)}</span>'
+
+
+def visual_bar(label: str, value: float, max_value: float = 100.0) -> str:
+    try:
+        pct_w   = max(0, min(100, float(value) / float(max_value) * 100))
+        display = f"{float(value):.2f}%"
+    except Exception:
+        pct_w, display = 0, "N/A"
+    return f"""
+    <div class="bar-row">
+      <div class="bar-label">{esc(label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:{pct_w:.1f}%;"></div></div>
+      <div class="bar-value">{esc(display)}</div>
+    </div>"""
+
+
+def table_html(rows: list[dict], columns: list[str]) -> str:
+    if not rows:
+        return "<p class='muted'>No data available.</p>"
+    out = ["<table><thead><tr>"]
+    for col in columns:
+        out.append(f"<th>{esc(col)}</th>")
+    out.append("</tr></thead><tbody>")
+    for row in rows:
+        cls = "changed-row" if row.get("changed_today") else ""
+        out.append(f"<tr class='{cls}'>")
+        for col in columns:
+            value = row.get(col, row.get(col.lower().replace(" ", "_"), ""))
+            if col in {"title", "Title"} and row.get("link"):
+                out.append(f"<td><a href='{esc(row['link'])}'>{esc(value)}</a></td>")
+            else:
+                out.append(f"<td>{esc(value)}</td>")
+        out.append("</tr>")
+    out.append("</tbody></table>")
+    return "".join(out)
+
+
+# ── Section builders ───────────────────────────────────────────────────────────
+
+def build_visual_intelligence(portfolio_snapshot: list[dict], top_movers: list[dict]) -> str:
+    if not portfolio_snapshot:
+        return "<p class='muted'>No portfolio visual data available.</p>"
+
+    largest     = portfolio_snapshot[0]
+    top_3_weight = 0.0
+    for row in portfolio_snapshot[:3]:
+        try:
+            top_3_weight += float(str(row.get("Weight", "0")).replace("%", "").replace("+", ""))
+        except Exception:
+            pass
+
+    sector_weights: dict[str, float] = {}
+    for row in portfolio_snapshot:
+        sector = row.get("Sector", "Unknown")
+        try:
+            w = float(str(row.get("Weight", "0")).replace("%", "").replace("+", ""))
+        except Exception:
+            w = 0.0
+        sector_weights[sector] = sector_weights.get(sector, 0.0) + w
+
+    top_move = top_movers[0] if top_movers else {}
+    bars     = "".join(visual_bar(s, w) for s, w in sorted(sector_weights.items(), key=lambda x: x[1], reverse=True)[:5])
+
+    return f"""
+    <div class="visual-grid">
+      <div class="visual-metric">
+        <div class="metric-label">Largest Holding</div>
+        <div class="metric-value">{esc(largest.get("Ticker", ""))}</div>
+        <div class="metric-sub">{esc(largest.get("Weight", ""))} of portfolio</div>
+      </div>
+      <div class="visual-metric">
+        <div class="metric-label">Top 3 Concentration</div>
+        <div class="metric-value">{top_3_weight:.2f}%</div>
+        <div class="metric-sub">combined portfolio weight</div>
+      </div>
+      <div class="visual-metric">
+        <div class="metric-label">Largest Daily Mover</div>
+        <div class="metric-value">{esc(top_move.get("Ticker", "N/A"))}</div>
+        <div class="metric-sub">{render_move_pill(top_move.get("Daily Move", "N/A"))} today</div>
+      </div>
+    </div>
+    <div class="mini-section-title">Sector Exposure</div>
+    <div class="bar-card">{bars}</div>"""
+
+
+def build_risk_notes(portfolio_snapshot: list[dict]) -> list[str]:
+    notes = []
+    if not portfolio_snapshot:
+        return notes
+    try:
+        top3 = sum(
+            float(str(r.get("Weight", "0")).replace("%", "").replace("+", ""))
+            for r in portfolio_snapshot[:3]
+        )
+        notes.append(f"Top 3 holdings account for {top3:.2f}% of total portfolio exposure.")
+    except Exception:
+        pass
+    sector_weights: dict[str, float] = {}
+    for row in portfolio_snapshot:
+        sector = row.get("Sector", "Unknown")
+        try:
+            w = float(str(row.get("Weight", "0")).replace("%", "").replace("+", ""))
+        except Exception:
+            w = 0.0
+        sector_weights[sector] = sector_weights.get(sector, 0.0) + w
+    if sector_weights:
+        largest = max(sector_weights.items(), key=lambda x: x[1])
+        notes.append(f"{largest[0]} represents the largest sector exposure at {largest[1]:.2f}%.")
+        if largest[1] > 40:
+            notes.append("Portfolio remains concentrated in a small number of sectors.")
+    return notes
+
+
+def build_overnight_changes(
+    top_movers: list[dict],
+    sec_rows: list[dict],
+    macro_rows: list[dict],
+    company_news_rows: list[dict],
+) -> list[str]:
+    changes = []
+    if top_movers:
+        m = top_movers[0]
+        changes.append(f"{m.get('Ticker')} moved {m.get('Daily Move')} on the session.")
+    oil = next((r for r in macro_rows if r.get("Indicator") == "Oil"), None)
+    if oil:
+        changes.append(f"Oil moved {oil.get('Daily Change (%)')} with crude volatility remaining elevated.")
+    if sec_rows:
+        changes.append(f"{len(sec_rows)} recent SEC filing(s) identified across portfolio holdings.")
+    if company_news_rows:
+        h = company_news_rows[0]
+        changes.append(f"{h.get('ticker', h.get('Ticker', ''))}: {h.get('title', h.get('Title', ''))}")
+    return changes[:4]
+
+
+def build_market_themes(market_news_rows: list[dict]) -> list[str]:
+    joined = " ".join(str(r.get("Title", "")).lower() for r in market_news_rows)
+    themes = []
+    if "inflation" in joined or "yield" in joined:
+        themes.append("Treasury yields and inflation expectations remained a primary market focus.")
+    if "oil" in joined or "crude" in joined:
+        themes.append("Energy markets remained volatile amid geopolitical and supply concerns.")
+    if "nasdaq" in joined or "technology" in joined:
+        themes.append("Technology leadership continued driving broader equity performance.")
+    if "fed" in joined:
+        themes.append("Markets continued recalibrating expectations around Federal Reserve policy.")
+    return themes[:4]
+
+
+def build_position_notes(
+    top_movers: list[dict],
+    sec_rows: list[dict],
+    earnings_rows: list[dict],
+) -> list[dict]:
+    notes, tracked = [], set()
+    for mover in top_movers[:3]:
+        ticker = mover.get("Ticker")
+        if ticker in tracked:
+            continue
+        tracked.add(ticker)
+        sec_count = len([x for x in sec_rows if x.get("Ticker") == ticker])
+        earnings   = next((x for x in earnings_rows if x.get("Ticker") == ticker), None)
+        parts      = [f"Daily move: {mover.get('Daily Move')}"]
+        if sec_count:
+            parts.append(f"{sec_count} recent SEC filing(s)")
+        if earnings:
+            parts.append(f"Earnings scheduled {earnings.get('Date')}")
+        notes.append({"Ticker": ticker, "Notes": " · ".join(parts)})
+    return notes
+
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
+
+_CSS = """
+<style>
+  body { margin:0; padding:0; background:#f1f5f9; color:#0f172a;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .container { max-width:980px; margin:0 auto; padding:28px; }
+  .header { padding:34px; border-radius:24px;
+            background:linear-gradient(135deg,#0f172a 0%,#172554 100%);
+            color:white; border:1px solid #1e293b;
+            box-shadow:0 10px 30px rgba(15,23,42,.15); }
+  .eyebrow { color:#93c5fd; font-size:12px; text-transform:uppercase;
+             letter-spacing:.14em; font-weight:700; margin-bottom:10px; }
+  h1 { margin:0 0 14px; font-size:48px; line-height:1.05; font-weight:800; color:white; }
+  .subtitle { color:#dbeafe; font-size:18px; line-height:1.6; max-width:760px; }
+  .generated { margin-top:22px; color:#cbd5e1; font-size:14px; }
+  .card { background:white; border:1px solid #e2e8f0; border-radius:22px;
+          padding:24px; margin:22px 0; box-shadow:0 4px 18px rgba(15,23,42,.05); }
+  .card h2 { margin:0 0 16px; font-size:24px; color:#0f172a; font-weight:750; }
+  .muted { color:#64748b; line-height:1.6; }
+  table { width:100%; border-collapse:collapse; font-size:13px;
+          table-layout:fixed; word-wrap:break-word; }
+  th { text-align:left; color:#475569; border-bottom:2px solid #e2e8f0;
+       padding:10px 8px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  td { border-bottom:1px solid #f1f5f9; padding:10px 8px; color:#0f172a;
+       vertical-align:top; line-height:1.4; }
+  tr:hover td { background:#f8fafc; }
+  .changed-row td { background:#fef3c7; }
+  .tag { display:inline-block; padding:6px 10px; border-radius:999px;
+         background:#eff6ff; color:#1d4ed8; font-size:12px; margin-right:8px; font-weight:600; }
+  .visual-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:10px 0 18px; }
+  .visual-metric { background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:16px; }
+  .metric-label { color:#64748b; font-size:11px; text-transform:uppercase;
+                  letter-spacing:.06em; font-weight:700; }
+  .metric-value { color:#0f172a; font-size:24px; font-weight:800; margin-top:8px; }
+  .metric-sub   { color:#64748b; font-size:13px; margin-top:4px; }
+  .mini-section-title { font-size:13px; font-weight:800; color:#334155;
+                        margin:18px 0 10px; text-transform:uppercase; letter-spacing:.06em; }
+  .bar-card { background:#f8fafc; border:1px solid #e2e8f0; border-radius:16px; padding:14px; }
+  .bar-row  { display:grid; grid-template-columns:150px 1fr 70px;
+              align-items:center; gap:10px; margin:10px 0; }
+  .bar-label { color:#334155; font-size:13px; font-weight:600; }
+  .bar-track { height:10px; background:#e2e8f0; border-radius:999px; overflow:hidden; }
+  .bar-fill  { height:10px; background:#2563eb; border-radius:999px; }
+  .bar-value { color:#475569; font-size:12px; text-align:right; font-weight:700; }
+  .move-pill     { display:inline-block; padding:4px 10px; border-radius:999px;
+                   font-size:12px; font-weight:700; background:#e2e8f0; color:#0f172a; }
+  .move-positive { background:#dcfce7; color:#166534; }
+  .move-negative { background:#fee2e2; color:#991b1b; }
+  .footer { color:#64748b; font-size:13px; margin-top:28px; text-align:center; }
+  @media only screen and (max-width:700px) {
+    h1 { font-size:34px; } .card { padding:18px; } table { font-size:12px; }
+  }
+</style>"""
+
+
+# ── Main build function ────────────────────────────────────────────────────────
+
+def build_hybrid_newsletter() -> tuple[str, str]:
+    prefs    = load_preferences()
+    holdings = load_portfolio()
+    tickers  = [h.ticker for h in holdings]
+
+    # ── Fetch data ─────────────────────────────────────────────────────────────
+    if FAST_TEST_MODE:
+        company_news_rows = market_news_rows = global_news_rows = []
+    else:
+        company_news_rows = company_news(tickers, per_ticker=3)
+        market_news_rows  = market_news(limit=8)
+        global_news_rows  = fetch_global_development_news(limit=8)
+
+    earnings  = get_upcoming_earnings(tickers, days_ahead=30)
+    sec       = get_sec_filings(tickers, lookback_days=30, max_filings_per_ticker=5)
+    alerts    = latest_alerts(limit=25)
+    macro     = macro_dashboard()
+    monitor   = build_holdings_change_monitor(
+        holdings, earnings_calendar=earnings, sec_filings=sec, benchmark="SPY"
+    )
+
+    build_morning_brief(
+        portfolio_rows=monitor.get("holdings", []),
+        holdings_monitor_rows=monitor.get("holdings", []),
+        earnings_calendar=earnings,
+        sec_filings=sec,
+        alerts=alerts,
+        macro_data=macro,
+    )
+
+    holdings_rows = monitor.get("holdings", [])
+    macro_events  = load_macro_events()
+
+    # ── Top movers ─────────────────────────────────────────────────────────────
+    top_movers = sorted(
+        [
+            {
+                "Ticker":           row.get("ticker", ""),
+                "Daily Move":       pct(row.get("daily_move_pct")),
+                "Weekly Move":      pct(row.get("weekly_move_pct")),
+                "Volume vs 30D Avg": (
+                    f"{float(row.get('volume_vs_30d_avg')):.2f}x"
+                    if row.get("volume_vs_30d_avg") is not None else "N/A"
+                ),
+            }
+            for row in holdings_rows
+        ],
+        key=lambda r: abs(float(str(r["Daily Move"]).replace("%", "").replace("+", "") or 0))
+            if r["Daily Move"] != "N/A" else 0,
+        reverse=True,
+    )[:5]
+
+    # ── Portfolio snapshot ─────────────────────────────────────────────────────
+    portfolio_snapshot = [
+        {
+            "Ticker":       row.get("ticker", ""),
+            "Sector":       row.get("sector", ""),
+            "Weight":       pct(row.get("portfolio_weight_pct")),
+            "Market Value": money(row.get("market_value")),
+            "Daily Move":   pct(row.get("daily_move_pct")),
+        }
+        for row in holdings_rows
+    ]
+
+    # ── Earnings ───────────────────────────────────────────────────────────────
+    earnings_rows = [
+        {
+            "Ticker": getattr(e, "ticker", "") if not isinstance(e, dict) else e.get("ticker", ""),
+            "Date":   str(getattr(e, "date",   "") if not isinstance(e, dict) else e.get("date",   ""))[:10],
+            "Source": getattr(e, "source", "Yahoo Finance") if not isinstance(e, dict) else e.get("source", "Yahoo Finance"),
+        }
+        for e in (earnings or [])
+    ]
+
+    # ── SEC filings ────────────────────────────────────────────────────────────
+    sec_rows = _normalize_sec_rows(sec or [])
+
+    # ── Alerts ─────────────────────────────────────────────────────────────────
+    seen_alerts, alert_rows = set(), []
+    for a in (alerts or []):
+        key = (a.get("alert_type", ""), a.get("ticker", ""), a.get("title", ""))
+        if key in seen_alerts:
+            continue
+        seen_alerts.add(key)
+        alert_rows.append({
+            "Type":     a.get("alert_type", ""),
+            "Severity": a.get("severity",   ""),
+            "Ticker":   a.get("ticker",     ""),
+            "Title":    a.get("title",      ""),
+        })
+
+    # ── Macro rows ─────────────────────────────────────────────────────────────
+    macro_rows_raw = macro.get("Indicators", macro.get("macro_indicators", [])) if isinstance(macro, dict) else []
+    macro_rows = []
+    for row in macro_rows_raw:
+        clean = {}
+        for k, v in row.items():
+            if "change" in str(k).lower():
+                clean[k] = pct(v)
+            elif isinstance(v, (float, int)):
+                clean[k] = number(v)
+            else:
+                clean[k] = v
+        macro_rows.append(clean)
+
+    # ── Global developments (source_rank stripped from display) ────────────────
+    global_development_rows = [
+        {
+            "Category":  row.get("category",  ""),
+            "Title":     row.get("title",      ""),
+            "Published": row.get("published",  ""),
+            "Source":    row.get("source",     ""),
+            "Link":      row.get("link",       ""),
+        }
+        for row in global_news_rows
+        if row.get("title")
+    ] or [{"Category": "", "Title": "No global development headlines found.", "Published": "", "Source": "", "Link": ""}]
+
+    # ── Headline (source_rank used for selection only, not rendered) ────────────
+    headline_row    = _select_headline_row(company_news_rows, market_news_rows)
+    headline_source = headline_row.get("source", "N/A")
+    headline_ticker = headline_row.get("ticker", "")
+    headline_title  = headline_row.get("title", "No major headline found from approved sources.")
+    headline_pubdate = str(headline_row.get("published", ""))[:10] or "—"
+    biggest_headline = f"{headline_ticker + ': ' if headline_ticker else ''}{headline_title}"
+
+    # ── Overnight changes & executive summary ───────────────────────────────────
+    overnight_changes = build_overnight_changes(top_movers, sec_rows, macro_rows, company_news_rows)
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    top_move_text = ""
+    if top_movers:
+        t = top_movers[0]
+        top_move_text = f"{t['Ticker']} was the largest portfolio mover at {t['Daily Move']}. "
+
+    earnings_text = (
+        f"{len(earnings_rows)} upcoming earnings catalyst"
+        + (" is" if len(earnings_rows) == 1 else "s are")
+        + " on the calendar."
+    )
+
+    executive_summary = (
+        f"{top_move_text}"
+        f"The brief covers {len(sec_rows)} recent SEC filing"
+        f"{'s' if len(sec_rows) != 1 else ''}, {len(alert_rows)} active alert"
+        f"{'s' if len(alert_rows) != 1 else ''}, and macro indicators across "
+        f"rates, volatility, energy, the dollar, and gold. "
+        f"{earnings_text} "
+        f"Top headline sourced from {headline_source}."
+    )
+
+    # ── Portfolio news display columns (no source_rank) ────────────────────────
+    portfolio_news_rows = [
+        {
+            "Ticker":    r.get("ticker",    r.get("Ticker", "")),
+            "Title":     r.get("title",     r.get("Title",  "")),
+            "Published": r.get("published", r.get("Published", ""))[:10] if r.get("published") or r.get("Published") else "",
+            "Source":    r.get("source",    r.get("Source", "")),
+            "link":      r.get("link",      r.get("Link",   "")),
+        }
+        for r in company_news_rows[:12]
+    ]
+
+    # ── HTML body ──────────────────────────────────────────────────────────────
+    html_body = f"""
+<html>
+<head>{_CSS}</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <div class="eyebrow">Daily Portfolio Brief</div>
+      <h1>Morning Portfolio Update</h1>
+      <div class="subtitle">Facts-first portfolio monitoring: market movement, catalysts, macro events, SEC filings, and alerts.</div>
+      <p class="generated">Generated: {esc(generated_at)}</p>
+    </div>
+
+    <div class="card">
+      <h2>Executive Summary</h2>
+      <p>{esc(executive_summary)}</p>
+    </div>
+
+    <div class="card">
+      <h2>Biggest Headline of the Day</h2>
+      <p><strong>{esc(biggest_headline)}</strong></p>
+      <p class="muted">Source: {esc(headline_source)} &nbsp;·&nbsp; Published: {esc(headline_pubdate)}</p>
+    </div>
+
+    <div class="card">
+      <h2>What Changed Overnight</h2>
+      <ul>{"".join(f"<li>{esc(x)}</li>" for x in overnight_changes)}</ul>
+    </div>
+
+    <div class="card">
+      <h2>Portfolio Snapshot</h2>
+      {table_html(portfolio_snapshot, ["Ticker","Sector","Weight","Market Value","Daily Move"])}
+    </div>
+
+    <div class="card">
+      <h2>Visual Intelligence</h2>
+      <p class="muted">Concentration, movement, and sector exposure at a glance.</p>
+      {build_visual_intelligence(portfolio_snapshot, top_movers)}
+    </div>
+
+    <div class="card">
+      <h2>Portfolio Risk Notes</h2>
+      <ul>{"".join(f"<li>{esc(x)}</li>" for x in build_risk_notes(portfolio_snapshot))}</ul>
+    </div>
+
+    <div class="card">
+      <h2>Top Movers</h2>
+      <p class="muted">Largest absolute daily moves across current holdings.</p>
+      {table_html(top_movers, ["Ticker","Daily Move","Weekly Move","Volume vs 30D Avg"])}
+    </div>
+
+    <div class="card">
+      <h2>Position-Level Intelligence</h2>
+      {table_html(build_position_notes(top_movers, sec_rows, earnings_rows), ["Ticker","Notes"])}
+    </div>
+
+    <div class="card">
+      <h2>Portfolio News</h2>
+      {table_html(portfolio_news_rows, ["Ticker","Title","Published","Source"])}
+    </div>
+
+    <div class="card">
+      <h2>Market Themes</h2>
+      <ul>{"".join(f"<li>{esc(x)}</li>" for x in build_market_themes(market_news_rows))}</ul>
+    </div>
+
+    <div class="card">
+      <h2>Macro Snapshot</h2>
+      {table_html(macro_rows, list(macro_rows[0].keys()) if macro_rows else ["Indicator","Latest"])}
+    </div>
+
+    <div class="card">
+      <h2>Economic Calendar</h2>
+      <p class="muted">Rows highlighted when the event release date or last update is today.</p>
+      {table_html(
+          [
+              {
+                  "Event":  row["event"],
+                  "Date":   row["release_date"],
+                  "Time":   row["time"],
+                  "Days":   row["days_until"],
+                  "Imp.":   row["importance"],
+                  "Exp.":   row["expected"],
+                  "Prior":  row["prior"],
+                  "Source": row["source"],
+                  "changed_today": row["changed_today"],
+              }
+              for row in macro_events
+          ],
+          ["Event","Date","Time","Days","Imp.","Exp.","Prior","Source"],
+      )}
+    </div>
+
+    <div class="card">
+      <h2>Earnings Calendar</h2>
+      <p class="muted">{len(earnings_rows)} upcoming earnings event(s).</p>
+      {table_html(earnings_rows, ["Ticker","Date","Source"])}
+    </div>
+
+    <div class="card">
+      <h2>SEC Monitoring</h2>
+      {table_html(sec_rows, ["Ticker","Form","Date","Factual Note"])}
+    </div>
+
+    <div class="card">
+      <h2>Alerts</h2>
+      <p class="muted">{len(alert_rows)} alert(s) currently active.</p>
+      {table_html(alert_rows, ["Type","Severity","Ticker","Title"])}
+    </div>
+
+    <div class="card">
+      <h2>Global Developments</h2>
+      {table_html(global_development_rows, ["Category","Title","Published","Source"])}
+    </div>
+
+    <div class="footer">
+      This brief is factual monitoring only and does not provide investment recommendations.
+    </div>
+  </div>
+</body>
+</html>"""
+
+    html_body = remove_disabled_sections(html_body, prefs)
+
+    # ── Plain-text fallback ────────────────────────────────────────────────────
+    text_lines = [
+        "Daily Portfolio Brief",
+        f"Generated: {generated_at}",
+        "",
+        f"Biggest Headline: {biggest_headline}",
+        f"Source: {headline_source}",
+        "",
+        "Top Movers:",
+    ]
+    for r in top_movers:
+        text_lines.append(
+            f"  {r['Ticker']}: {r['Daily Move']} today, "
+            f"{r['Weekly Move']} weekly, {r['Volume vs 30D Avg']} volume"
+        )
+    text_body = "\n".join(text_lines)
+
+    return html_body, text_body
+
+
+# ── Public entry point used by main.py and the control centre ──────────────────
+
+def build_and_save_newsletter() -> None:
+    """Generate the newsletter and write all output files. Called by main.py."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    html_body, text_body = build_hybrid_newsletter()
+    for bad, good in _MOJIBAKE.items():
+        html_body = html_body.replace(bad, good)
+        text_body = text_body.replace(bad, good)
+
+    (OUTPUT_DIR / "hybrid_newsletter.html").write_text(html_body, encoding="utf-8")
+    (OUTPUT_DIR / "hybrid_newsletter.txt").write_text(text_body, encoding="utf-8")
+    (OUTPUT_DIR / "latest_newsletter.html").write_text(html_body, encoding="utf-8")
+    (OUTPUT_DIR / "latest_newsletter.txt").write_text(text_body, encoding="utf-8")
+
+    print("Newsletter generated.")
+    print("  HTML → output/latest_newsletter.html")
+    print("  Text → output/latest_newsletter.txt")
+
+
+def main() -> None:
+    build_and_save_newsletter()
+
+
+if __name__ == "__main__":
+    main()

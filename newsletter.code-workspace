@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "templates"
+		},
+		{
+			"path": "output"
+		},
+		{
+			"path": "logs"
+		},
+		{
+			"path": "database"
+		},
+		{
+			"path": "app"
+		}
+	]
+}

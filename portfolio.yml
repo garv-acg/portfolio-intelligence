@@ -1,0 +1,27 @@
+# Edit this file with your actual holdings.
+# shares and cost_basis are optional; ticker is required.
+holdings:
+  - ticker: SPOT
+    name: Spotify Tech.
+    shares: 1
+    cost_basis: 314.70
+  - ticker: AVGO
+    name: Broadcom
+    shares: 1.004
+    cost_basis: 303.97
+  - ticker: NVDA
+    name: NVIDIA Corp.
+    shares: 1
+    cost_basis: 145.11
+  - ticker: AMZN
+    name: Amazon.com Inc.
+    shares: 1
+    cost_basis: 193.63
+  - ticker: GE
+    name: GE Aerospace
+    shares: 1.021
+    cost_basis: 275.45
+  - ticker: AAPL
+    name: Apple
+    shares: 1.002
+    cost_basis: 210.79

@@ -1,0 +1,13 @@
+{
+  "portfolio_snapshot": true,
+  "visual_intelligence": true,
+  "top_movers": true,
+  "portfolio_news": true,
+  "market_update": true,
+  "macro_snapshot": true,
+  "economic_calendar": true,
+  "earnings_calendar": true,
+  "sec_monitoring": true,
+  "alerts": true,
+  "global_developments": true
+}
