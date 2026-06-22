@@ -1167,67 +1167,169 @@ def build_hybrid_newsletter() -> tuple[str, str]:
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # ── Executive summary — lead with market context, surface key signals ──────
+    # ── Executive summary ──────────────────────────────────────────────────────
     def _build_executive_summary() -> str:
         parts = []
 
-        # 1. Market session context from biggest headline
-        headline_title_low = headline_title.lower()
-        if any(w in headline_title_low for w in ["ceasefire", "iran", "war", "peace", "deal"]):
-            parts.append(f"Geopolitical developments drove market action today.")
-        elif any(w in headline_title_low for w in ["fed", "rate hike", "rate cut", "inflation", "cpi", "fomc"]):
-            parts.append(f"Rate and inflation concerns dominated market sentiment.")
-        elif any(w in headline_title_low for w in ["rally", "gain", "jump", "surge", "advance", "rise"]):
-            parts.append(f"Equities advanced on the session.")
-        elif any(w in headline_title_low for w in ["fall", "drop", "decline", "slide", "sell", "plunge", "crash"]):
-            parts.append(f"Equities sold off on the session.")
-        else:
-            parts.append(f"Markets were mixed on the session.")
+        def _pct_float(val: str) -> float | None:
+            try:
+                return float(str(val).replace("%","").replace("+","").replace(",",""))
+            except Exception:
+                return None
 
-        # 2. Portfolio movers — top 2 gainers and biggest loser
-        gainers  = [m for m in top_movers if m.get("Daily Move", "").startswith("+")]
-        losers   = [m for m in top_movers if m.get("Daily Move", "").startswith("-")]
+        def _colored(text: str, positive: bool | None) -> str:
+            if positive is True:
+                return f"<span style='color:#4ade80;font-weight:600'>{text}</span>"
+            if positive is False:
+                return f"<span style='color:#f87171;font-weight:600'>{text}</span>"
+            return f"<span style='font-weight:600'>{text}</span>"
+
+        # ── 1. Market lead: SPY/QQQ actual moves, not headline keyword matching ──
+        spy_row = next((r for r in macro_rows if r.get("Ticker") == "SPY"), None)
+        qqq_row = next((r for r in macro_rows if r.get("Ticker") == "QQQ"), None)
+        spy_chg = _pct_float(spy_row.get("Daily Change (%)", "")) if spy_row else None
+        qqq_chg = _pct_float(qqq_row.get("Daily Change (%)", "")) if qqq_row else None
+
+        if spy_chg is not None:
+            spy_str = _colored(f"SPY {spy_chg:+.2f}%", spy_chg > 0)
+            if qqq_chg is not None:
+                qqq_str = _colored(f"QQQ {qqq_chg:+.2f}%", qqq_chg > 0)
+                spread = qqq_chg - spy_chg
+                if abs(spread) >= 0.5:
+                    leader = "growth/tech outperformed" if spread > 0 else "value/defensives outperformed"
+                    parts.append(f"{spy_str}, {qqq_str} — {leader}.")
+                else:
+                    tone = "broad advance" if spy_chg > 0.3 else "broad decline" if spy_chg < -0.3 else "mixed session"
+                    parts.append(f"{spy_str}, {qqq_str} — {tone}.")
+            else:
+                tone = "equities advanced" if spy_chg > 0.3 else "equities declined" if spy_chg < -0.3 else "equities were mixed"
+                parts.append(f"{spy_str} — {tone}.")
+        else:
+            # Fallback to headline context only when market data is absent
+            hl = headline_title.lower()
+            if any(w in hl for w in ["fed","fomc","rate","inflation","cpi","pce"]):
+                parts.append("Rate and inflation signals dominated the session.")
+            elif any(w in hl for w in ["iran","war","ceasefire","geopolit","sanction","tariff"]):
+                parts.append("Geopolitical developments were in focus.")
+            else:
+                parts.append("Markets were mixed on the session.")
+
+        # ── 2. Portfolio breadth + top movers ─────────────────────────────────
+        all_holdings = [r for r in holdings_rows if _pct_float(pct(r.get("daily_move_pct"))) is not None]
+        n_green = sum(1 for r in all_holdings if (_pct_float(pct(r.get("daily_move_pct"))) or 0) > 0)
+        n_total = len(all_holdings)
+
+        gainers = [m for m in top_movers if m.get("Daily Move","").startswith("+")]
+        losers  = [m for m in top_movers if m.get("Daily Move","").startswith("-")]
+
         mover_parts = []
         for m in gainers[:2]:
-            mover_parts.append(f"<span style='color:#16a34a;font-weight:600'>{m['Ticker']} {m['Daily Move']}</span>")
+            vol = m.get("Volume vs 30D Avg","")
+            vol_note = f" · {vol} vol" if vol and vol != "N/A" else ""
+            mover_parts.append(_colored(f"{m['Ticker']} {m['Daily Move']}{vol_note}", True))
         for m in losers[:1]:
-            mover_parts.append(f"<span style='color:#dc2626;font-weight:600'>{m['Ticker']} {m['Daily Move']}</span>")
-        if mover_parts:
+            mover_parts.append(_colored(f"{m['Ticker']} {m['Daily Move']}", False))
+
+        if mover_parts and n_total:
+            breadth = f"{n_green}/{n_total} holdings green"
+            parts.append(f"Portfolio: {', '.join(mover_parts)} — {breadth}.")
+        elif mover_parts:
             parts.append(f"Portfolio movers: {', '.join(mover_parts)}.")
 
-        # 3. Key macro signal — oil and yields
-        oil_row = next((r for r in macro_rows if r.get("Indicator") == "Oil"), None)
-        vix_row = next((r for r in macro_rows if r.get("Indicator") == "VIX"), None)
+        # ── 3. Macro signals: yields, oil, VIX, dollar ────────────────────────
+        def _macro_row(ticker: str = "", indicator: str = "") -> dict | None:
+            if ticker:
+                return next((r for r in macro_rows if r.get("Ticker") == ticker), None)
+            return next((r for r in macro_rows if r.get("Indicator") == indicator), None)
+
         macro_notes = []
+
+        tsy_row = _macro_row(ticker="^TNX")
+        if tsy_row:
+            tsy_val = tsy_row.get("Latest","")
+            tsy_chg = _pct_float(tsy_row.get("Daily Change (%)",""))
+            if tsy_val and tsy_val != "N/A":
+                try:
+                    tsy_f = float(str(tsy_val).replace(",",""))
+                    if tsy_chg is not None and abs(tsy_chg) >= 1.0:
+                        direction = "rose" if tsy_chg > 0 else "fell"
+                        macro_notes.append(f"10Y yield {direction} to {tsy_f:.2f}%")
+                    elif tsy_f >= 4.5:
+                        macro_notes.append(f"10Y yield at {tsy_f:.2f}% (elevated)")
+                except Exception:
+                    pass
+
+        oil_row = _macro_row(indicator="Oil") or _macro_row(ticker="CL=F")
         if oil_row:
-            oil_move = oil_row.get("Daily Change (%)", "")
-            if oil_move and oil_move != "N/A":
-                oil_col = "#dc2626" if str(oil_move).startswith("-") else "#16a34a"
-                macro_notes.append(f"Oil <span style='color:{oil_col};font-weight:600'>{oil_move}</span>")
+            oil_chg = _pct_float(oil_row.get("Daily Change (%)",""))
+            oil_val = oil_row.get("Latest","")
+            if oil_chg is not None and abs(oil_chg) >= 1.5:
+                direction = "up" if oil_chg > 0 else "down"
+                macro_notes.append(
+                    _colored(f"oil {direction} {oil_chg:+.1f}% at ${float(str(oil_val).replace(',','')):.0f}", oil_chg > 0)
+                )
+
+        vix_row = _macro_row(indicator="VIX") or _macro_row(ticker="^VIX")
         if vix_row:
-            vix_val = vix_row.get("Latest", "")
             try:
-                vix_float = float(str(vix_val).replace(",",""))
-                if vix_float > 25:
-                    macro_notes.append(f"VIX elevated at {vix_val}")
-                elif vix_float < 15:
-                    macro_notes.append(f"VIX low at {vix_val}")
+                vix_f = float(str(vix_row.get("Latest","")).replace(",",""))
+                vix_chg = _pct_float(vix_row.get("Daily Change (%)",""))
+                if vix_f > 25:
+                    macro_notes.append(f"VIX elevated at {vix_f:.1f}")
+                elif vix_f < 14:
+                    macro_notes.append(f"VIX low at {vix_f:.1f} (complacency)")
+                elif vix_chg is not None and abs(vix_chg) >= 8:
+                    direction = "spiked" if vix_chg > 0 else "dropped"
+                    macro_notes.append(f"VIX {direction} {vix_chg:+.1f}% to {vix_f:.1f}")
             except Exception:
                 pass
+
         if macro_notes:
             parts.append(f"{'; '.join(macro_notes)}.")
 
-        # 4. Critical alerts
-        critical = [a for a in alert_rows if a.get("Tier") == "Critical"]
-        if critical:
-            c = critical[0]
-            parts.append(
-                f"Critical alert: {c.get('Type','')} on {c.get('Ticker','')}."
-                if c.get("Ticker") else
-                f"Critical alert: {c.get('Type','')}."
-            )
+        # ── 4. Regime — one sentence integrating name + key driver ────────────
+        regime_name = getattr(cross_asset_regime, "regime", None)
+        regime_conf = getattr(cross_asset_regime, "confidence", None)
+        regime_drivers = getattr(cross_asset_regime, "drivers", []) or []
+        if regime_name and regime_name not in ("Mixed / Transitional",):
+            driver_note = f": {regime_drivers[0].lower()}" if regime_drivers else ""
+            conf_note = f" ({regime_conf.lower()} confidence)" if regime_conf and regime_conf != "N/A" else ""
+            parts.append(f"Regime: {regime_name}{conf_note}{driver_note}.")
 
-        # 5. Most urgent upcoming catalyst
+        # ── 5. Alerts — critical first, surface actual detail not just type ────
+        critical  = [a for a in alert_rows if a.get("Tier") == "Critical"]
+        important = [a for a in alert_rows if a.get("Tier") == "Important"]
+        def _alert_short(a: dict, max_len: int = 72) -> str:
+            import re as _re
+            ticker = a.get("Ticker","")
+            detail = a.get("Detail","") or a.get("Type","")
+            # Strip SEC EDGAR "COMPANY NAME  (0000012345) " boilerplate
+            detail = _re.sub(r'^[A-Z][A-Z &,\.]+\s+\(\d{7,10}\)\s+', '', detail)
+            # Remove "[Item X.XX, ...] " item-code prefixes
+            detail = _re.sub(r'^\[.*?\]\s+', '', detail)
+            # Remove "TICKER " prefix when it's just the ticker followed by a verb
+            if ticker:
+                if detail.upper().startswith(ticker.upper() + " "):
+                    detail = detail[len(ticker) + 1:]
+            detail = detail.rstrip(". ").strip()
+            # Truncate at word boundary
+            if len(detail) <= max_len:
+                return detail
+            truncated = detail[:max_len]
+            last_space = truncated.rfind(" ")
+            return (truncated[:last_space] if last_space > max_len // 2 else truncated) + "…"
+
+        alert_notes = []
+        for a in critical[:2]:
+            prefix = f"{a['Ticker']}: " if a.get("Ticker") else ""
+            alert_notes.append(f"⚠ {prefix}{_alert_short(a)}")
+        for a in important[:1]:
+            prefix = f"{a['Ticker']}: " if a.get("Ticker") else ""
+            alert_notes.append(f"• {prefix}{_alert_short(a, max_len=60)}")
+        if alert_notes:
+            parts.append(" &nbsp;|&nbsp; ".join(alert_notes) + ".")
+
+        # ── 6. Catalysts — urgency-aware phrasing ─────────────────────────────
         upcoming_macro = [
             row for row in macro_events
             if row.get("release_date","").lower() != "daily"
@@ -1237,13 +1339,37 @@ def build_hybrid_newsletter() -> tuple[str, str]:
         ]
         next_earnings = earnings_rows[0] if earnings_rows else None
         catalyst_parts = []
+
         if upcoming_macro:
             m = upcoming_macro[0]
-            catalyst_parts.append(f"{m['event']} in {m['days_until']}")
+            days_str = m.get("days_until","")
+            try:
+                days_int = int(days_str.replace("d",""))
+                urgency = "tomorrow" if days_int == 1 else f"in {days_str}"
+                if days_int <= 3:
+                    catalyst_parts.append(
+                        f"<span style='color:#fbbf24;font-weight:600'>{m['event']} {urgency}</span>"
+                    )
+                else:
+                    catalyst_parts.append(f"{m['event']} in {days_str}")
+            except Exception:
+                catalyst_parts.append(f"{m['event']} in {days_str}")
+
         if next_earnings:
-            catalyst_parts.append(
-                f"{next_earnings.get('Ticker','')} earnings in {next_earnings.get('Days','')}"
-            )
+            days_str = next_earnings.get("Days","")
+            ticker = next_earnings.get("Ticker","")
+            try:
+                days_int = int(days_str.replace("d",""))
+                urgency = "tomorrow" if days_int == 1 else f"in {days_str}"
+                if days_int <= 7:
+                    catalyst_parts.append(
+                        f"<span style='color:#fbbf24;font-weight:600'>{ticker} earnings {urgency}</span>"
+                    )
+                else:
+                    catalyst_parts.append(f"{ticker} earnings in {days_str}")
+            except Exception:
+                catalyst_parts.append(f"{ticker} earnings in {days_str}")
+
         if catalyst_parts:
             parts.append(f"Watch: {'; '.join(catalyst_parts)}.")
 
