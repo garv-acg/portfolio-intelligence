@@ -461,7 +461,7 @@ with hdr_right:
         with st.spinner("Sending…"):
             try:
                 result = subprocess.run(
-                    [sys.executable, str(PROJECT_ROOT / "send_newsletter.py")],
+                    [sys.executable, str(PROJECT_ROOT / "app" / "send_newsletter.py")],
                     capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=60,
                 )
                 if result.returncode == 0:
@@ -780,6 +780,98 @@ st.markdown(
     f'<div class="macro-strip">{cells_html}</div>',
     unsafe_allow_html=True,
 )
+
+st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
+
+# ── Run history panel ─────────────────────────────────────────────────────────
+
+def _parse_run_log(log_path: Path, max_runs: int = 5) -> list[dict]:
+    if not log_path.exists():
+        return []
+
+    runs: list[dict] = []
+    current: dict | None = None
+
+    for raw in log_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+
+        ts = line[1:line.find("]")] if line.startswith("[") else None
+        body = line[line.find("]") + 2:] if ts else line
+
+        if "OVERNIGHT WORKFLOW STARTED" in body:
+            current = {"started": ts, "steps": [], "status": "running", "ended": None}
+        elif current is not None:
+            if "OVERNIGHT WORKFLOW COMPLETE" in body:
+                current["status"] = "success"
+                current["ended"] = ts
+                runs.append(current)
+                current = None
+            elif "OVERNIGHT WORKFLOW FAILED" in body:
+                current["status"] = "failed"
+                current["ended"] = ts
+                runs.append(current)
+                current = None
+            elif "DRY RUN" in body:
+                current["status"] = "dry-run"
+            elif body.startswith("SUCCESS | "):
+                current["steps"].append(("✓", body[len("SUCCESS | "):]))
+            elif body.startswith("FAIL | "):
+                current["steps"].append(("✗", body[len("FAIL | "):].split(" | ")[0]))
+            elif body.startswith("START | "):
+                current["steps"].append(("·", body[len("START | "):]))
+
+    if current:
+        current["status"] = "incomplete"
+        runs.append(current)
+
+    return list(reversed(runs))[:max_runs]
+
+
+def _fmt_ts(ts: str | None) -> str:
+    if not ts:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(ts)
+        return dt.strftime("%-m/%-d  %-I:%M %p UTC")
+    except Exception:
+        return ts[:16]
+
+
+LOG_PATH = PROJECT_ROOT / "logs" / "overnight_runs.log"
+runs = _parse_run_log(LOG_PATH)
+
+st.markdown('<div class="nl-preview-title">Automation History</div>', unsafe_allow_html=True)
+
+if not runs:
+    st.markdown(
+        '<div class="nl-preview" style="color:#475569;">No run history found yet — launchd fires at 7 AM.</div>',
+        unsafe_allow_html=True,
+    )
+else:
+    STATUS_COLOR = {"success": "#22c55e", "failed": "#ef4444", "dry-run": "#f59e0b", "incomplete": "#94a3b8", "running": "#60a5fa"}
+    STATUS_LABEL = {"success": "✓ Success", "failed": "✗ Failed", "dry-run": "○ Dry run", "incomplete": "… Incomplete", "running": "● Running"}
+
+    rows_html = ""
+    for run in runs:
+        col = STATUS_COLOR.get(run["status"], "#94a3b8")
+        lbl = STATUS_LABEL.get(run["status"], run["status"])
+        steps_html = " &nbsp;·&nbsp; ".join(
+            f'<span style="color:{"#22c55e" if ic=="✓" else "#ef4444" if ic=="✗" else "#475569"}">{ic} {name.split(" | ")[0]}</span>'
+            for ic, name in run["steps"] if ic != "·"
+        )
+        rows_html += f"""
+        <div style="display:flex;align-items:baseline;gap:14px;padding:8px 0;border-bottom:1px solid #1a2235;">
+            <span style="color:{col};font-size:.78rem;font-weight:800;min-width:80px;">{lbl}</span>
+            <span style="color:#64748b;font-size:.72rem;min-width:140px;">{_fmt_ts(run["started"])}</span>
+            <span style="font-size:.72rem;">{steps_html}</span>
+        </div>"""
+
+    st.markdown(
+        f'<div class="nl-preview" style="max-height:180px;">{rows_html}</div>',
+        unsafe_allow_html=True,
+    )
 
 st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
