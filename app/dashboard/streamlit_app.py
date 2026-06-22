@@ -463,7 +463,7 @@ with hdr_right:
                 venv_python = PROJECT_ROOT / ".venv" / "bin" / "python"
                 python_bin = str(venv_python) if venv_python.exists() else sys.executable
                 result = subprocess.run(
-                    [python_bin, str(PROJECT_ROOT / "app" / "send_newsletter.py")],
+                    [python_bin, str(PROJECT_ROOT / "send_newsletter.py")],
                     capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=60,
                 )
                 if result.returncode == 0:

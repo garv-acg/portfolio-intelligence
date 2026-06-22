@@ -89,7 +89,7 @@ def main() -> None:
     ]
     if not args.skip_email:
         # Use app/send_newsletter.py — reads creds from .env, proper error handling
-        steps.append(("Send newsletter email", [python, str(PROJECT_ROOT / "app" / "send_newsletter.py")]))
+        steps.append(("Send newsletter email", [python, str(PROJECT_ROOT / "send_newsletter.py")]))
 
     write_log("OVERNIGHT WORKFLOW STARTED")
 
