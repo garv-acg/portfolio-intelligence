@@ -24,7 +24,8 @@ Built end-to-end with **Claude Sonnet 4.6** in VS Code. Fully autonomous once de
 
 The output is a single polished HTML email — dark-themed, mobile-responsive, structured like an institutional morning note. Every section filters to your actual holdings.
 
-<img src="https://img.shields.io/badge/Output-HTML%20Email-1c2030?style=flat-square&logoColor=white" />
+<img src="assets/newsletter_preview.png" alt="Morning Market Brief preview" width="600" />
+
 
 | Section | What it covers |
 |---|---|
