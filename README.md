@@ -24,7 +24,7 @@ Built end-to-end with **Claude Sonnet 4.6** in VS Code. Fully autonomous once de
 
 The output is a single polished HTML email — dark-themed, mobile-responsive, structured like an institutional morning note. Every section filters to your actual holdings.
 
-<img src="assets/newsletter_preview.png" alt="Morning Market Brief preview" width="600" />
+<img src="https://raw.githubusercontent.com/garv-acg/portfolio-intelligence/main/assets/newsletter_preview.png" alt="Morning Market Brief preview" width="600" />
 
 
 | Section | What it covers |
