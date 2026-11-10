@@ -298,6 +298,56 @@ def render_header() -> None:
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 
+def render_user_profile_selector() -> Path:
+    ensure_default_profiles()
+    profiles = ensure_default_profiles()
+
+    st.sidebar.markdown("### User Profile")
+
+    profile_labels = {
+        f"{profile.display_name} ({profile.user_id})": profile.user_id
+        for profile in profiles
+    }
+
+    labels = list(profile_labels.keys())
+    current_user_id = st.session_state.get("active_user_id")
+    default_index = 0
+
+    if current_user_id:
+        for i, label in enumerate(labels):
+            if profile_labels[label] == current_user_id:
+                default_index = i
+                break
+
+    selected_label = st.sidebar.selectbox("Active user", labels, index=default_index)
+    selected_user_id = profile_labels[selected_label]
+    st.session_state["active_user_id"] = selected_user_id
+
+    profile = get_user_profile(selected_user_id)
+    st.session_state["active_profile"] = profile
+    st.session_state["portfolio_path_override"] = str(profile.portfolio_file)
+
+    with st.sidebar.expander("Create User", expanded=False):
+        new_name = st.text_input("Display name", key="new_user_display_name")
+        new_email = st.text_input("Email", key="new_user_email")
+        if st.button("Create Profile"):
+            if not new_name.strip():
+                st.warning("Enter a display name first.")
+            else:
+                new_profile = create_user_profile(
+                    display_name=new_name.strip(),
+                    email=new_email.strip() or None,
+                    copy_from_portfolio=Path(st.session_state.get("portfolio_path_override", "data/portfolio.csv")),
+                )
+                st.session_state["active_user_id"] = new_profile.user_id
+                st.session_state["portfolio_path_override"] = str(new_profile.portfolio_file)
+                st.success(f"Created profile: {new_profile.display_name}")
+                st.rerun()
+
+    st.sidebar.caption(f"Portfolio: {profile.portfolio_file}")
+    return profile.portfolio_file
+
+
 def render_sidebar() -> str:
     st.sidebar.markdown("## Control Center")
     st.sidebar.caption("Navigate your workflow from one interface.")
