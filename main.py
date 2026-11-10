@@ -13,11 +13,13 @@ thin so there is exactly ONE newsletter pipeline and ONE set of output files.
 """
 from __future__ import annotations
 
+import sys
+
 from generate_hybrid_newsletter import build_and_save_newsletter
 
 
-def main(send_email: bool = False) -> None:
-    build_and_save_newsletter()
+def main(send_email: bool = False, weekly: bool = False) -> None:
+    build_and_save_newsletter(weekly=weekly)
 
     if send_email:
         # Email delivery wired separately via send_newsletter.py
@@ -25,4 +27,4 @@ def main(send_email: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    main(send_email=False)
+    main(send_email=False, weekly="--weekly" in sys.argv)

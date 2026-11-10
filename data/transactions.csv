@@ -1,0 +1,16 @@
+date,ticker,action,shares,price,notes
+2026-01-02,SPOT,buy,1.0,314.70,Initial position
+2025-09-03,AVGO,buy,1.0,303.89,Initial position
+2025-12-30,AVGO,buy,0.002,325.00,Dividend
+2026-03-30,AVGO,buy,0.002,325.00,Dividend
+2026-06-29,AVGO,buy,0.002,325.00,Dividend
+2024-06-24,AAPL,buy,1.0,210.68,Initial position
+2026-02-11,AAPL,buy,0.001,260,Dividend
+2026-06-24,AAPL,buy,0.001,210.68,Dividend
+2026-04-24,GE,buy,0.002,240.00,Dividend
+2026-01-23,GE,buy,0.001,370.00,Dividend
+2025-09-03,GE,buy,1.0,275.42,Initial position
+2025-09-03,GE,buy,.018,275.56,Dividend
+2024-06-28,AMZN,buy,1.0,193.63,Initial position
+2026-01-02,NVDA,buy,.001,250,Dividend
+2024-12-05,NVDA,buy,1.0,145.11,Initial position

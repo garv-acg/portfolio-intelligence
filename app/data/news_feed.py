@@ -329,6 +329,18 @@ def _fetch_rss(url: str, limit: int = 10) -> list[dict[str, Any]]:
             source = _clean_source(raw_title, raw_source, link)
             if not raw_title or not _is_quality_headline(raw_title, source, link):
                 continue
+            # Extract article snippet from <description> — strip HTML tags
+            raw_desc = item.findtext("description", default="").strip()
+            try:
+                import re as _re
+                desc = _re.sub(r"<[^>]+>", " ", raw_desc)
+                desc = html.unescape(desc).strip()
+                desc = _re.sub(r"\s+", " ", desc)
+                # Truncate to ~200 chars at a word boundary
+                if len(desc) > 200:
+                    desc = desc[:200].rsplit(" ", 1)[0] + "…"
+            except Exception:
+                desc = ""
             try:
                 published = parsedate_to_datetime(pub_date).astimezone(timezone.utc).isoformat()
             except Exception:
@@ -339,6 +351,7 @@ def _fetch_rss(url: str, limit: int = 10) -> list[dict[str, Any]]:
                 "published":   published,
                 "source":      source,
                 "source_rank": source_rank(source),
+                "excerpt":     desc,
             })
             if len(rows) >= limit:
                 break
@@ -436,6 +449,43 @@ def market_news(limit: int = 8) -> list[dict[str, Any]]:
         out.append(row)
         if len(out) >= limit:
             break
+    return out
+
+
+def weekly_news(tickers: list[str], limit_per_day: int = 3) -> list[dict]:
+    """
+    Fetch ~7 days of market + company news with real article excerpts from
+    Yahoo Finance RSS feeds. Returns rows sorted by published date, newest first.
+    Each row: title, link, published (ISO), source, excerpt, ticker (or 'market').
+    """
+    import html as _html
+    rows: list[dict] = []
+
+    # Market-wide feeds via Yahoo Finance (has real <description> excerpts)
+    market_feeds = [
+        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US",
+        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=QQQ&region=US&lang=en-US",
+    ]
+    for feed in market_feeds:
+        for r in _fetch_rss(feed, limit=20):
+            r.setdefault("ticker", "market")
+            rows.append(r)
+
+    # Company-specific Yahoo Finance feeds
+    for ticker in tickers:
+        feed = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+        for r in _fetch_rss(feed, limit=10):
+            r.setdefault("ticker", ticker.upper())
+            rows.append(r)
+
+    # Deduplicate by title
+    seen, out = set(), []
+    for row in sorted(rows, key=lambda r: r.get("published", ""), reverse=True):
+        t = row.get("title", "")
+        if t and t not in seen:
+            seen.add(t)
+            out.append(row)
+
     return out
 
 

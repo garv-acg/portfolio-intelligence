@@ -4,5 +4,7 @@ __pycache__/
 *.pyc
 output/*.html
 output/*.txt
+output/*.json
 logs/*.log
+logs/*.jsonl
 .DS_Store

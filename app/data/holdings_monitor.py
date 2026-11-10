@@ -188,6 +188,25 @@ def _pct_change(close: pd.Series, periods: int) -> float | None:
         return None
 
 
+def _ytd_change(close: pd.Series) -> float | None:
+    """Return % change from the last trading day of the prior year to today."""
+    if close is None or close.empty:
+        return None
+    try:
+        import datetime as _dt
+        jan1 = pd.Timestamp(f"{_dt.date.today().year}-01-01", tz="UTC")
+        prior_year = close[close.index < jan1]
+        if prior_year.empty:
+            return None
+        base = float(prior_year.iloc[-1])
+        current = float(close.iloc[-1])
+        if base <= 0 or math.isnan(base) or math.isnan(current):
+            return None
+        return (current / base - 1) * 100
+    except Exception:
+        return None
+
+
 def _distance_from_high(close: pd.Series, window: int) -> float | None:
     if close.empty:
         return None
@@ -270,10 +289,12 @@ def build_holdings_change_monitor(
     earnings_map = _earnings_days_map(earnings_calendar or [])
     sec_map      = _sec_filings_map(sec_filings or [])
 
-    spy_chart  = _download_chart(benchmark, lookback_days=400)
-    spy_close  = spy_chart["close"] if not spy_chart.empty else pd.Series(dtype=float)
-    spy_daily  = _pct_change(spy_close, 1)
-    spy_weekly = _pct_change(spy_close, 5)
+    spy_chart   = _download_chart(benchmark, lookback_days=400)
+    spy_close   = spy_chart["close"] if not spy_chart.empty else pd.Series(dtype=float)
+    spy_daily   = _pct_change(spy_close, 1)
+    spy_weekly  = _pct_change(spy_close, 5)
+    spy_monthly = _pct_change(spy_close, 21)
+    spy_ytd     = _ytd_change(spy_close)
 
     rows = []
 
@@ -304,8 +325,10 @@ def build_holdings_change_monitor(
             if not sector_chart.empty:
                 sector_weekly = _pct_change(sector_chart["close"], 5)
 
-        daily  = _pct_change(close, 1)
-        weekly = _pct_change(close, 5)
+        daily   = _pct_change(close, 1)
+        weekly  = _pct_change(close, 5)
+        monthly = _pct_change(close, 21)
+        ytd     = _ytd_change(close)
 
         market_cap      = quote.get("market_cap")
         market_cap_tier = _market_cap_tier(_safe_float(market_cap, 0.0)) if market_cap else fallback.get("market_cap_tier", "Unknown")
@@ -327,6 +350,8 @@ def build_holdings_change_monitor(
             "market_value":              value,
             "daily_move_pct":            daily,
             "weekly_move_pct":           weekly,
+            "monthly_move_pct":          monthly,
+            "ytd_move_pct":              ytd,
             "weekly_vs_spy_pct":         weekly - spy_weekly if weekly is not None and spy_weekly is not None else None,
             "weekly_vs_sector_etf_pct":  weekly - sector_weekly if weekly is not None and sector_weekly is not None else None,
             "earnings_proximity":        earnings_map.get(ticker, "None found"),
@@ -355,6 +380,10 @@ def build_holdings_change_monitor(
         "status":    "Ready",
         "message":   "Holdings change monitor completed.",
         "benchmark": benchmark,
+        "spy_daily":   spy_daily,
+        "spy_weekly":  spy_weekly,
+        "spy_monthly": spy_monthly,
+        "spy_ytd":     spy_ytd,
         "holdings":  df.sort_values("portfolio_weight_pct", ascending=False).to_dict("records"),
         "exposure":  exposure,
     }
