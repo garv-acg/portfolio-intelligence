@@ -15,6 +15,7 @@ TWR algorithm:
 from __future__ import annotations
 
 import math
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
@@ -75,9 +76,24 @@ def _price_on_or_before(prices: pd.Series, d: date) -> Optional[float]:
 # ── Transaction log ────────────────────────────────────────────────────────────
 
 def load_transactions() -> pd.DataFrame:
-    if not TRANSACTIONS_FILE.exists():
-        return pd.DataFrame(columns=["date", "ticker", "action", "shares", "price", "notes"])
-    df = pd.read_csv(TRANSACTIONS_FILE, parse_dates=["date"])
+    # Postgres is the source of truth once DATABASE_URL is configured (so
+    # transactions added from the web Control Center feed this calculation
+    # too) — any failure falls straight through to the original CSV read.
+    df = None
+    if os.environ.get("DATABASE_URL", "").strip():
+        try:
+            import portfolio_store
+            rows = portfolio_store.load_transactions()
+            if rows:
+                df = pd.DataFrame(rows)
+        except Exception as exc:
+            print(f"[load_transactions] Postgres read failed, falling back to CSV: {exc}")
+
+    if df is None:
+        if not TRANSACTIONS_FILE.exists():
+            return pd.DataFrame(columns=["date", "ticker", "action", "shares", "price", "notes"])
+        df = pd.read_csv(TRANSACTIONS_FILE, parse_dates=["date"])
+
     df["date"]   = pd.to_datetime(df["date"]).dt.date
     df["shares"] = pd.to_numeric(df["shares"], errors="coerce").fillna(0.0)
     df["price"]  = pd.to_numeric(df["price"],  errors="coerce").fillna(0.0)

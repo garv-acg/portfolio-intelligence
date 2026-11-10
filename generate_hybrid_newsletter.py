@@ -21,6 +21,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 import json
 import html
+import os
 import pandas as pd
 
 from app.data.earnings import get_upcoming_earnings, get_earnings_preview
@@ -123,6 +124,19 @@ class Holding:
 
 
 def load_portfolio() -> list[Holding]:
+    # Postgres is the source of truth once DATABASE_URL is configured (so edits
+    # made from the web Control Center show up here) — but only if it's actually
+    # reachable and has rows; any failure falls straight through to the original
+    # CSV behavior below, unchanged. See portfolio_store.py for the full contract.
+    if os.environ.get("DATABASE_URL", "").strip():
+        try:
+            import portfolio_store
+            rows = portfolio_store.load_holdings()
+            if rows:
+                return [Holding(ticker=r["ticker"], shares=r["shares"], cost_basis=r["cost_basis"]) for r in rows]
+        except Exception as exc:
+            print(f"[load_portfolio] Postgres read failed, falling back to CSV: {exc}")
+
     path = USER_PORTFOLIO if USER_PORTFOLIO.exists() else FALLBACK_PORTFOLIO
     df   = pd.read_csv(path)
     return [

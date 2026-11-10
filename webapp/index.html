@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Center</title>
+<meta name="description" content="Portfolio monitoring, construction, backtesting and paper-trading control center.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232a78d6%22/><path d=%22M20 65 L40 45 L55 58 L80 30%22 stroke=%22white%22 stroke-width=%228%22 fill=%22none%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // Single place to point this at the deployed backend. localhost during
+  // dev (python -m uvicorn server.main:app --port 8000), the Render URL
+  // once deployed (see DESIGN_RATIONALE.md for the current value).
+  window.API_BASE = (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+    ? "http://localhost:8000"
+    : "https://portfolio-control-center-api.onrender.com";
+  // Defense-in-depth only (see server/main.py's require_api_key) — the real
+  // access boundary is that only you can load this page at all, since the
+  // Netlify account it's on requires your own login to view any page on it.
+  window.API_KEY = "";
+</script>
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand">
+      <div class="mark">Control Center</div>
+      <div class="tag">Portfolio &amp; strategy workbench</div>
+    </div>
+    <div id="nav"></div>
+    <div class="bottom">
+      <button class="theme-toggle" id="theme-toggle" type="button">Theme</button>
+      <a class="small muted" href="https://portfolio-intelligence-brief.netlify.app" target="_blank" rel="noopener">Daily Brief dashboard ↗</a>
+    </div>
+  </nav>
+  <main class="main" id="main">
+    <div class="loading">Loading…</div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

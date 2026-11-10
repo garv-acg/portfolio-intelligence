@@ -108,6 +108,17 @@ def write_status(
     with STATUS_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
+    # Best-effort mirror to Postgres so the remote Control Center (which can't
+    # see this machine's local files) can show "last run" status. Never lets
+    # a Postgres hiccup affect the local run — this is purely additive.
+    if os.environ.get("DATABASE_URL", "").strip():
+        try:
+            from server.db import init_db, record_pipeline_status
+            init_db()
+            record_pipeline_status(record["date"], generate_ok, send_ok, deploy_ok, error)
+        except Exception as exc:
+            write_log(f"WARN | Could not mirror run status to Postgres: {exc}")
+
 
 def deploy_dashboard() -> tuple[bool, str]:
     """Publish site/ (including today's freshly generated site/data/*.json) to

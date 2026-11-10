@@ -65,8 +65,45 @@ notes. Short version:
   (see "Not yet investigated" below) — don't confuse the two.
 
 Portfolio holdings for the live pipeline come from
-`data/users/demo/portfolio.csv` (read by `portfolio_manager.py`), **not**
-the root `portfolio.yml`.
+`data/users/demo/portfolio.csv` (read by `portfolio_manager.py`) **unless**
+`DATABASE_URL` is set, in which case Postgres is the source of truth — see
+"Control Center" below. Either way, never the root `portfolio.yml`.
+
+## Control Center (Render + Netlify)
+
+Added Nov 2026 — a full rewrite of `newsletter_control_center.py` (the
+Streamlit app) into a FastAPI backend + a second Netlify site. See
+`CONTROL_CENTER.md` for the full design writeup, architecture, and the
+remaining setup steps only you can do (Neon account, Render service). Short
+version:
+
+- `server/` — FastAPI backend. Deployed separately (Render) from the
+  newsletter send engine, same pattern as `the_docket`'s `web/app.py`.
+  Every "live data" route recomputes fresh from Yahoo/FRED/SEC on each
+  request using the same `app/data/*` engines the email pipeline uses — no
+  caching, no persistence for those. Only the execution ledger (paper
+  trades, cash, approve/reject) and shared portfolio/transactions state
+  live in Postgres (Neon, free tier) via `server/db.py`.
+- `webapp/` — plain HTML/CSS/vanilla JS frontend (same design tokens as
+  `site/styles.css`), 11 pages, published to Netlify separately from the
+  Daily Brief dashboard: **https://portfolio-control-center.netlify.app**
+  (project `portfolio-control-center`, same Personal Netlify account — same
+  account-wide SSO gating applies).
+- `portfolio_store.py` (repo root) — the shared read/write layer for
+  holdings + transactions. With `DATABASE_URL` unset, byte-for-byte the old
+  CSV-only behavior (verified via a full local `overnight_runner.py` run).
+  With it set, Postgres is canonical, CSV becomes a fallback cache.
+  `generate_hybrid_newsletter.py`'s `load_portfolio()` and
+  `app/data/portfolio_returns.py`'s `load_transactions()` both go through
+  this, so editing holdings from the web Control Center affects the real
+  daily email too.
+- `render.yaml` — Render Blueprint for the backend service
+  (`portfolio-control-center-api`). Not yet deployed — needs you to connect
+  the GitHub repo in Render's dashboard and set `DATABASE_URL`/`API_KEY`.
+- API auth: a shared-secret `X-API-Key` header (`server/main.py`'s
+  `require_api_key`), no-op if `API_KEY` env var isn't set. Defense in
+  depth against the raw Render URL being hit directly (CORS alone doesn't
+  stop that) — the real access boundary is Netlify's account-wide SSO.
 
 ## launchd jobs
 
@@ -113,6 +150,10 @@ mode at resend.com/domains before assuming something else broke.
 - `OPENAI_API_KEY` (currently unset) — pipeline has a deterministic fallback when absent.
 - `NEWSAPI_KEY` (currently unset) — optional news source.
 - `NEWSLETTER_MAX_ARTICLES_PER_TICKER`, `NEWSLETTER_LOOKBACK_HOURS` — generation tuning.
+- `DATABASE_URL` (currently unset locally) — once set, the local pipeline
+  reads/writes portfolio holdings + transactions through Postgres instead
+  of CSV (see "Control Center"); also used by `server/` on Render.
+- `API_KEY` (currently unset) — only read by `server/`, not the local pipeline.
 
 If a Gmail App Password stops working, generate a new one at
 https://myaccount.google.com/apppasswords — 2FA re-enrollment, a password
@@ -168,7 +209,14 @@ job running with this flag or healthcheck will flag it as a failure.
   large `generate_hybrid_newsletter.py`'s import graph is — don't delete
   without re-checking.
 - A number of root-level scripts (`install_*.py`, `patch_*.py`,
-  `newsletter_control_center.py`, `run_newsletter.py`,
-  `test_newsletter_preferences.py`) look like one-off/legacy tooling not
-  called by the live path, mirroring what was just removed from `app/`, but
-  cleaning these up wasn't part of this pass — ask before touching them.
+  `run_newsletter.py`, `test_newsletter_preferences.py`) look like
+  one-off/legacy tooling not called by the live path, mirroring what was
+  just removed from `app/`, but cleaning these up wasn't part of this pass —
+  ask before touching them.
+- `newsletter_control_center.py` and `portfolio_manager.py` (both root,
+  Streamlit) are now **superseded** by `server/` + `webapp/` (see "Control
+  Center" above) — every page/feature either got fixed-and-ported there or
+  deliberately cut (see `CONTROL_CENTER.md`'s "Known gaps"). Left in place
+  rather than deleted, since they still work standalone if you ever want a
+  local-only fallback, but don't add new features to them — the web version
+  is where ongoing work should go.
