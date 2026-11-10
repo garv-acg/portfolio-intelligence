@@ -8,3 +8,6 @@ output/*.json
 logs/*.log
 logs/*.jsonl
 .DS_Store
+site/data/*.json
+!site/data/.gitkeep
+.netlify/

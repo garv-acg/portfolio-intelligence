@@ -44,6 +44,8 @@ USER_PORTFOLIO    = Path("data/users/demo/portfolio.csv")
 FALLBACK_PORTFOLIO = Path("portfolio.csv")
 MACRO_EVENTS_FILE = Path("data/macro_events.csv")
 PREFERENCES_FILE  = Path("data/users/demo/newsletter_preferences.json")
+SITE_DATA_DIR     = Path("site/data")
+DASHBOARD_HISTORY_DAYS = 90  # trailing window kept in site/data/history.json
 
 # Set True to skip live news fetches during local testing
 FAST_TEST_MODE = False
@@ -2017,6 +2019,189 @@ def build_what_to_watch(
     return [txt for _, txt in items[:5]]  # cap at 5 items
 
 
+def _round_or_none(value, digits=2):
+    try:
+        if value is None:
+            return None
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_dashboard_data(
+    *,
+    generated_at_iso: str,
+    headline_title: str,
+    headline_ticker: str,
+    headline_source: str,
+    headline_pubdate: str,
+    headline_url: str,
+    executive_summary_html: str,
+    holdings_rows: list[dict],
+    pnl_map: dict[str, dict],
+    cash_value: float,
+    port_daily, port_weekly, port_monthly, port_ytd,
+    spy_daily, spy_weekly, spy_monthly, spy_ytd,
+    top_movers: list[dict],
+    alert_rows: list[dict],
+    cross_asset_regime,
+    yield_curve: dict,
+    fear_greed: dict | None,
+    macro_rows_raw: list[dict],
+    earnings_rows: list[dict],
+    analyst_rating_rows: list[dict],
+    price_target_rows: list[dict],
+    sec_rows: list[dict],
+    dividend_calendar: list[dict],
+    portfolio_news_rows: list[dict],
+    global_development_rows: list[dict],
+    risk_notes: list[str],
+    market_themes: list[str],
+    macro_events: list[dict],
+) -> None:
+    """Writes site/data/latest.json (today's snapshot) and appends a point to
+    site/data/history.json (for sparklines/trend charts on the dashboard site).
+
+    This is purely a side-effecting export — it reads already-fetched data
+    computed earlier in build_hybrid_newsletter() and does not re-fetch
+    anything. Safe to fail without affecting the email pipeline: wrapped in
+    try/except by the caller.
+    """
+    SITE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    holdings = []
+    for row in holdings_rows:
+        ticker = str(row.get("ticker", "")).upper()
+        pnl = pnl_map.get(ticker, {})
+        holdings.append({
+            "ticker":            ticker,
+            "sector":            row.get("sector") or "Unclassified",
+            "price":             _round_or_none(row.get("latest_price")),
+            "market_value":      _round_or_none(row.get("market_value")),
+            "weight_pct":        _round_or_none(row.get("portfolio_weight_pct")),
+            "daily_pct":         _round_or_none(row.get("daily_move_pct")),
+            "weekly_pct":        _round_or_none(row.get("weekly_move_pct")),
+            "monthly_pct":       _round_or_none(row.get("monthly_move_pct")),
+            "ytd_pct":           _round_or_none(row.get("ytd_move_pct")),
+            "dist_52w_high_pct": _round_or_none(row.get("distance_from_52w_high_pct")),
+            "volume_vs_30d_avg": _round_or_none(row.get("volume_vs_30d_avg")),
+            "pnl_dollar":        _round_or_none(pnl.get("unreal_dollar"), 0),
+            "pnl_pct":           _round_or_none(pnl.get("unreal_pct")),
+            "cost_basis":        _round_or_none(pnl.get("cost_basis")),
+        })
+
+    sector_weights: dict[str, float] = {}
+    for h in holdings:
+        sector_weights[h["sector"]] = sector_weights.get(h["sector"], 0) + (h["weight_pct"] or 0)
+    sector_exposure = sorted(
+        [{"sector": s, "weight_pct": round(w, 2)} for s, w in sector_weights.items()],
+        key=lambda r: r["weight_pct"], reverse=True,
+    )
+
+    vix_row = next((r for r in macro_rows_raw if "VIX" in str(r.get("Indicator", "")) or r.get("Ticker") == "^VIX"), None)
+    vix = None
+    if vix_row:
+        try:
+            vix = float(str(vix_row.get("Latest", "")).replace(",", ""))
+        except (TypeError, ValueError):
+            vix = None
+
+    fg = fear_greed or {}
+
+    portfolio_value = round(sum(h["market_value"] or 0 for h in holdings) + (cash_value or 0), 2)
+
+    dashboard = {
+        "schema_version": 1,
+        "generated_at": generated_at_iso,
+        "headline": {
+            "title": headline_title, "ticker": headline_ticker,
+            "source": headline_source, "published": headline_pubdate, "url": headline_url,
+        },
+        "executive_summary_html": executive_summary_html,
+        "portfolio_value": portfolio_value,
+        "cash_value": _round_or_none(cash_value),
+        "performance": {
+            "today":   {"portfolio": _round_or_none(port_daily),   "spy": _round_or_none(spy_daily)},
+            "week":    {"portfolio": _round_or_none(port_weekly),  "spy": _round_or_none(spy_weekly)},
+            "month":   {"portfolio": _round_or_none(port_monthly), "spy": _round_or_none(spy_monthly)},
+            "ytd":     {"portfolio": _round_or_none(port_ytd),     "spy": _round_or_none(spy_ytd)},
+        },
+        "holdings": holdings,
+        "sector_exposure": sector_exposure,
+        "top_movers": [
+            {
+                "ticker": r.get("Ticker", ""),
+                "daily_pct": r.get("Daily Move"),
+                "weekly_pct": r.get("Weekly Move"),
+                "volume_vs_30d_avg": r.get("Volume vs 30D Avg"),
+            }
+            for r in top_movers
+        ],
+        "alerts": [
+            {"tier": a.get("Tier"), "type": a.get("Type"), "ticker": a.get("Ticker"), "detail": a.get("Detail")}
+            for a in alert_rows
+        ],
+        "regime": {
+            "label": getattr(cross_asset_regime, "regime", None),
+            "confidence": getattr(cross_asset_regime, "confidence", None),
+            "risk_score": getattr(cross_asset_regime, "risk_score", None),
+            "inflation_score": getattr(cross_asset_regime, "inflation_score", None),
+            "growth_score": getattr(cross_asset_regime, "growth_score", None),
+            "liquidity_score": getattr(cross_asset_regime, "liquidity_score", None),
+            "drivers": getattr(cross_asset_regime, "drivers", []) or [],
+            "leadership": getattr(cross_asset_regime, "leadership", []) or [],
+            "fragilities": getattr(cross_asset_regime, "fragilities", []) or [],
+            "narrative": getattr(cross_asset_regime, "narrative", ""),
+        },
+        "rates": {
+            "short_term_yield": yield_curve.get("2y"),
+            "ten_year_yield": yield_curve.get("10y"),
+            "spread": yield_curve.get("spread"),
+            "vix": vix,
+        },
+        "fear_greed": {
+            "score": _round_or_none(fg.get("score"), 0), "rating": fg.get("rating"),
+            "prev_week": _round_or_none(fg.get("prev_week"), 0),
+        },
+        "risk_notes": risk_notes,
+        "market_themes": market_themes,
+        "catalysts": earnings_rows[:8],
+        "macro_events": macro_events[:12] if macro_events else [],
+        "analyst_ratings": analyst_rating_rows[:12],
+        "price_targets": price_target_rows,
+        "sec_filings": sec_rows[:10],
+        "dividend_calendar": dividend_calendar[:10] if dividend_calendar else [],
+        "news": portfolio_news_rows,
+        "global_news": global_development_rows,
+    }
+
+    (SITE_DATA_DIR / "latest.json").write_text(json.dumps(dashboard, indent=2), encoding="utf-8")
+
+    # Append today's point to the rolling history file (used for trend lines).
+    history_path = SITE_DATA_DIR / "history.json"
+    try:
+        history = json.loads(history_path.read_text(encoding="utf-8")) if history_path.exists() else []
+    except (json.JSONDecodeError, OSError):
+        history = []
+
+    today_str = generated_at_iso[:10]
+    point = {
+        "date": today_str,
+        "portfolio_value": portfolio_value,
+        "daily_pct": _round_or_none(port_daily),
+        "spy_daily_pct": _round_or_none(spy_daily),
+        "risk_score": getattr(cross_asset_regime, "risk_score", None),
+        "regime": getattr(cross_asset_regime, "regime", None),
+        "vix": vix,
+        "holdings": {h["ticker"]: h["price"] for h in holdings},
+    }
+    history = [p for p in history if p.get("date") != today_str]
+    history.append(point)
+    history.sort(key=lambda p: p["date"])
+    history = history[-DASHBOARD_HISTORY_DAYS:]
+    history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+
 def build_hybrid_newsletter() -> tuple[str, str]:
     prefs    = load_preferences()
     holdings = load_portfolio()
@@ -3013,6 +3198,42 @@ def build_hybrid_newsletter() -> tuple[str, str]:
         "Factual monitoring only. No investment advice or recommendations.",
     ]
     text_body = "\n".join(text_lines)
+
+    try:
+        _write_dashboard_data(
+            generated_at_iso=datetime.now(timezone.utc).isoformat(),
+            headline_title=headline_title,
+            headline_ticker=headline_ticker,
+            headline_source=headline_source,
+            headline_pubdate=headline_pubdate,
+            headline_url=headline_row.get("link", ""),
+            executive_summary_html=executive_summary,
+            holdings_rows=holdings_rows,
+            pnl_map=pnl_map,
+            cash_value=1.51,
+            port_daily=port_daily, port_weekly=port_weekly,
+            port_monthly=port_monthly, port_ytd=port_ytd,
+            spy_daily=spy_daily, spy_weekly=spy_weekly,
+            spy_monthly=spy_monthly, spy_ytd=spy_ytd,
+            top_movers=top_movers,
+            alert_rows=alert_rows,
+            cross_asset_regime=cross_asset_regime,
+            yield_curve=yield_curve,
+            fear_greed=fear_greed,
+            macro_rows_raw=macro_rows_raw,
+            earnings_rows=earnings_rows,
+            analyst_rating_rows=analyst_rating_rows,
+            price_target_rows=price_target_rows,
+            sec_rows=sec_rows,
+            dividend_calendar=dividend_calendar,
+            portfolio_news_rows=portfolio_news_rows,
+            global_development_rows=global_development_rows,
+            risk_notes=build_risk_notes(portfolio_snapshot),
+            market_themes=build_market_themes(market_news_rows),
+            macro_events=macro_events,
+        )
+    except Exception as exc:
+        print(f"[dashboard export] failed, continuing without it: {exc}")
 
     return html_body, text_body, port_daily, port_weekly
 

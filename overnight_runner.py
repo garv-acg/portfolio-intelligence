@@ -24,6 +24,7 @@ LOG_DIR      = PROJECT_ROOT / "logs"
 LOG_FILE     = LOG_DIR / "overnight_runs.log"
 STATUS_FILE  = LOG_DIR / "send_status.jsonl"
 HTML_OUT     = PROJECT_ROOT / "output" / "latest_newsletter.html"
+DASHBOARD_DATA = PROJECT_ROOT / "site" / "data" / "latest.json"
 
 # How long to wait for network before giving up (seconds)
 NETWORK_WAIT_SECS = 120
@@ -86,7 +87,13 @@ def newsletter_was_generated_today() -> bool:
     return mtime.date() == datetime.now(timezone.utc).date()
 
 
-def write_status(generate_ok: bool, send_ok: bool | None, alert_ok: bool | None, error: str | None) -> None:
+def write_status(
+    generate_ok: bool,
+    send_ok: bool | None,
+    alert_ok: bool | None,
+    error: str | None,
+    deploy_ok: bool | None = None,
+) -> None:
     """Append one line to logs/send_status.jsonl summarizing today's run."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     record = {
@@ -94,11 +101,49 @@ def write_status(generate_ok: bool, send_ok: bool | None, alert_ok: bool | None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "generate_ok": generate_ok,
         "send_ok": send_ok,
+        "deploy_ok": deploy_ok,
         "alert_ok": alert_ok,
         "error": error,
     }
     with STATUS_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+
+def deploy_dashboard() -> tuple[bool, str]:
+    """Publish site/ (including today's freshly generated site/data/*.json) to
+    Netlify via `netlify deploy --prod`. Independent of the email send — a
+    deploy failure is logged and alerted on but never blocks the newsletter
+    email, and a dashboard-generation failure never blocks this deploy from
+    at least trying with whatever data/HTML already exist on disk."""
+    if not DASHBOARD_DATA.exists():
+        return False, "site/data/latest.json missing — dashboard export did not run"
+
+    write_log("START | Deploy dashboard to Netlify")
+    try:
+        result = subprocess.run(
+            ["netlify", "deploy", "--prod", "--dir=site", "--json"],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        write_log(f"FAIL | Deploy dashboard to Netlify | {exc}")
+        return False, str(exc)
+
+    if result.returncode != 0:
+        output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+        write_log(f"FAIL | Deploy dashboard to Netlify | exit={result.returncode}\n{output.strip()}")
+        return False, output.strip()
+
+    try:
+        payload = json.loads(result.stdout)
+        url = payload.get("deploy_url") or payload.get("url", "")
+    except (json.JSONDecodeError, AttributeError):
+        url = ""
+    write_log(f"SUCCESS | Deploy dashboard to Netlify | {url}")
+    return True, url
 
 
 def send_failure_alert(failed_step: str, output: str) -> bool:
@@ -140,8 +185,9 @@ def send_failure_alert(failed_step: str, output: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Overnight newsletter runner.")
-    parser.add_argument("--skip-email", action="store_true", help="Generate but do not send.")
-    parser.add_argument("--dry-run",    action="store_true", help="Show steps without running.")
+    parser.add_argument("--skip-email",  action="store_true", help="Generate but do not send.")
+    parser.add_argument("--skip-deploy", action="store_true", help="Generate but do not deploy the dashboard to Netlify.")
+    parser.add_argument("--dry-run",     action="store_true", help="Show steps without running.")
     args = parser.parse_args()
 
     python = sys.executable
@@ -159,6 +205,8 @@ def main() -> None:
     if args.dry_run:
         for name, command in steps:
             write_log(f"DRY RUN | {name} | {' '.join(command)}")
+        if not args.skip_deploy:
+            write_log("DRY RUN | Deploy dashboard to Netlify | netlify deploy --prod --dir=site --json")
         write_log("OVERNIGHT WORKFLOW DRY RUN COMPLETE")
         return
 
@@ -170,6 +218,7 @@ def main() -> None:
 
     generate_ok = False
     send_ok: bool | None = None
+    deploy_ok: bool | None = None
 
     for name, command in steps:
         ok, output = run_step(name, command)
@@ -193,11 +242,20 @@ def main() -> None:
         if not ok:
             write_log("OVERNIGHT WORKFLOW FAILED")
             alert_ok = send_failure_alert(name, output) if not args.skip_email else None
-            write_status(generate_ok=generate_ok, send_ok=send_ok, alert_ok=alert_ok, error=f"{name}: {output[:500]}")
+            write_status(generate_ok=generate_ok, send_ok=send_ok, deploy_ok=deploy_ok, alert_ok=alert_ok, error=f"{name}: {output[:500]}")
             raise SystemExit(1)
 
+        # Deploying the dashboard is independent of the email send — a bad
+        # deploy should never stop the newsletter email, and vice versa. It
+        # runs right after a successful generation, outside the abort-on-fail
+        # loop above, so it never takes down the rest of the run.
+        if name == "Generate newsletter" and not args.skip_deploy:
+            deploy_ok, deploy_output = deploy_dashboard()
+            if not deploy_ok:
+                send_failure_alert("Deploy dashboard", deploy_output) if not args.skip_email else None
+
     write_log("OVERNIGHT WORKFLOW COMPLETE")
-    write_status(generate_ok=generate_ok, send_ok=send_ok, alert_ok=None, error=None)
+    write_status(generate_ok=generate_ok, send_ok=send_ok, deploy_ok=deploy_ok, alert_ok=None, error=None)
 
 
 if __name__ == "__main__":

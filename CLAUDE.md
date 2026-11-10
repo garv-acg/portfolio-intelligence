@@ -8,22 +8,61 @@ from inside a FieldSync Claude Code session — this is its own environment.
 
 ```
 overnight_runner.py → main.py → generate_hybrid_newsletter.py → send_newsletter.py
+                     → netlify deploy --prod --dir=site   (dashboard)
 ```
 
 - `overnight_runner.py` — orchestrator. Waits for network, runs generation,
-  then sends, logs every step to `logs/overnight_runs.log`, writes one
-  `logs/send_status.jsonl` line per run, and alerts on failure via Resend
-  (falling back to a local macOS notification) — **not** Gmail, since Gmail
-  being broken is the most likely failure mode.
+  deploys the dashboard to Netlify, then sends the email, logs every step to
+  `logs/overnight_runs.log`, writes one `logs/send_status.jsonl` line per
+  run, and alerts on failure via Resend (falling back to a local macOS
+  notification) — **not** Gmail, since Gmail being broken is the most likely
+  failure mode. `--skip-deploy` skips the Netlify step; `--skip-email` skips
+  the send. A dashboard deploy failure is logged/alerted but never blocks
+  the email, and vice versa — they're independent.
 - `main.py` — thin wrapper calling `generate_hybrid_newsletter.build_and_save_newsletter()`.
 - `generate_hybrid_newsletter.py` — the actual pipeline. Pulls market/news/
-  portfolio data (via `app/data/*` and `app/config/settings.py` — see below)
-  and writes `output/latest_newsletter.html` / `.txt`.
+  portfolio data (via `app/data/*` and `app/config/settings.py` — see below),
+  writes `output/latest_newsletter.html` / `.txt` (the email body), **and**
+  writes `site/data/latest.json` + appends `site/data/history.json` (the
+  dashboard's data — see "Dashboard (Netlify)" below) via
+  `_write_dashboard_data()`, called at the end of `build_hybrid_newsletter()`.
+  Both reuse the same already-fetched data — there is no second fetch pass.
 - `send_newsletter.py` — reads `.env` directly (manual parse, not
   `python-dotenv`, specifically to avoid `app/email/` shadowing stdlib
   `email` when run from inside `app/` — always run this from the project
   root), sends via Gmail SMTP (`smtp.gmail.com:465`, app password auth).
-- `healthcheck.py` — independent watchdog (see below).
+- `healthcheck.py` — independent watchdog (see below). Also flags (but does
+  not treat as a hard failure) a day where the email sent fine but the
+  Netlify deploy failed.
+
+## Dashboard (Netlify)
+
+Added Nov 2026 — see `DESIGN_RATIONALE.md` for the full design writeup
+(what was borrowed from which competitor products and why) and architecture
+notes. Short version:
+
+- `site/` is a plain static site (`index.html` / `styles.css` / `app.js`,
+  vanilla JS, no build step, no framework) that fetches
+  `site/data/latest.json` + `site/data/history.json` client-side and renders
+  the whole dashboard. Those two JSON files are gitignored — they're
+  regenerated fresh by every run, not source.
+- Deployed via `netlify deploy --prod --dir=site` (already linked/authed on
+  this machine via `.netlify/state.json`, also gitignored) — **not** a
+  Netlify-Git-triggered build. There is no server, database, or API route.
+- Live at **https://portfolio-intelligence-brief.netlify.app** (Netlify
+  project `portfolio-intelligence-brief`, under the **Personal** Netlify
+  account/team, project id `1b6a2736-6d0a-4ce2-8603-543eb63d0073`).
+- That Personal Netlify account has **account-wide SSO/visitor-access
+  enforcement on** (`account_sso_login_context: all`), so the live URL
+  requires a Netlify login to view — kept intentionally (real portfolio/P&L
+  data, your own call) rather than made public. If you ever want it public,
+  that's a Netlify dashboard change (Site configuration → Visitor access),
+  not something in this repo.
+- `history.json` is this project's own rolling 90-day snapshot store
+  (portfolio value, daily %, regime, VIX, per-ticker price — enough for the
+  dashboard's sparklines and trend chart). It is **not** the same thing as
+  `data/history.db`'s `runs` table, which is unrelated and currently stale
+  (see "Not yet investigated" below) — don't confuse the two.
 
 Portfolio holdings for the live pipeline come from
 `data/users/demo/portfolio.csv` (read by `portfolio_manager.py`), **not**
@@ -83,11 +122,13 @@ reset, or signing in from a new device can all invalidate old app passwords.
 
 ```bash
 cd /Users/aidangarver/Projects/newsletter_agent
-.venv/bin/python overnight_runner.py --dry-run     # print steps, do nothing
-.venv/bin/python overnight_runner.py --skip-email   # generate only
-.venv/bin/python overnight_runner.py                 # full run: generate + send + alert-on-fail
-.venv/bin/python send_newsletter.py                  # send only, from the last generated output
-.venv/bin/python healthcheck.py                      # check today's status, alert if unhealthy
+.venv/bin/python overnight_runner.py --dry-run                     # print steps, do nothing
+.venv/bin/python overnight_runner.py --skip-email --skip-deploy    # generate only
+.venv/bin/python overnight_runner.py --skip-email                  # generate + deploy dashboard, no email
+.venv/bin/python overnight_runner.py                                 # full run: generate + deploy + send + alert-on-fail
+.venv/bin/python send_newsletter.py                                  # send only, from the last generated output
+netlify deploy --prod --dir=site                                     # deploy the dashboard only
+.venv/bin/python healthcheck.py                                      # check today's status, alert if unhealthy
 ```
 
 `--skip-email` leaves `send_ok: null` in `send_status.jsonl` for that run —

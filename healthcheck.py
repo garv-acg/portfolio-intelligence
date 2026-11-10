@@ -110,6 +110,10 @@ def main() -> None:
 
     write_log("OK | Today's newsletter send completed successfully")
 
+    if status.get("deploy_ok") is False:
+        write_log("WARN | Today's dashboard deploy failed (email still sent) — see overnight_runs.log")
+        alert("Email sent fine, but today's Netlify dashboard deploy failed — the site is showing stale data.")
+
 
 if __name__ == "__main__":
     main()

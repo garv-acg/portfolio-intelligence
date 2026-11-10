@@ -1,0 +1,13 @@
+[build]
+  publish = "site"
+
+# No build command: this is a plain static site with no bundler. The daily
+# `netlify deploy --prod --dir=site` call from overnight_runner.py uploads
+# site/ (including the freshly generated site/data/*.json) directly — there
+# is no Netlify-triggered build, so this [build] block only documents the
+# publish directory for `netlify dev` / the dashboard.
+
+[[headers]]
+  for = "/data/*.json"
+  [headers.values]
+    Cache-Control = "no-store"

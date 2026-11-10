@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dashboard",
-      "runtimeExecutable": "streamlit",
-      "runtimeArgs": ["run", "app/dashboard/streamlit_app.py", "--server.port=8501"],
-      "port": 8501
+      "name": "dashboard-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8743"],
+      "port": 8743
     }
   ]
 }
