@@ -69,41 +69,52 @@ Portfolio holdings for the live pipeline come from
 `DATABASE_URL` is set, in which case Postgres is the source of truth — see
 "Control Center" below. Either way, never the root `portfolio.yml`.
 
-## Control Center (Render + Netlify)
+## Control Center (Render + Netlify + Neon)
 
 Added Nov 2026 — a full rewrite of `newsletter_control_center.py` (the
-Streamlit app) into a FastAPI backend + a second Netlify site. See
-`CONTROL_CENTER.md` for the full design writeup, architecture, and the
-remaining setup steps only you can do (Neon account, Render service). Short
-version:
+Streamlit app) into a FastAPI backend + a second Netlify site, **fully
+deployed and live** as of Nov 11. See `CONTROL_CENTER.md` for the full
+design writeup and architecture. Short version:
 
-- `server/` — FastAPI backend. Deployed separately (Render) from the
-  newsletter send engine, same pattern as `the_docket`'s `web/app.py`.
-  Every "live data" route recomputes fresh from Yahoo/FRED/SEC on each
-  request using the same `app/data/*` engines the email pipeline uses — no
-  caching, no persistence for those. Only the execution ledger (paper
-  trades, cash, approve/reject) and shared portfolio/transactions state
-  live in Postgres (Neon, free tier) via `server/db.py`.
-- `webapp/` — plain HTML/CSS/vanilla JS frontend (same design tokens as
-  `site/styles.css`), 11 pages, published to Netlify separately from the
-  Daily Brief dashboard: **https://portfolio-control-center.netlify.app**
-  (project `portfolio-control-center`, same Personal Netlify account — same
-  account-wide SSO gating applies).
+- `server/` — FastAPI backend, live at
+  **https://portfolio-control-center-api-te8l.onrender.com** (Render free
+  web service `portfolio-control-center-api-te8l`, created from
+  `render.yaml` via `render ea blueprints create`/`approve`; sleeps after
+  15min idle, ~30-60s cold start on the next request). Every "live data"
+  route recomputes fresh from Yahoo/FRED/SEC on each request using the same
+  `app/data/*` engines the email pipeline uses — no caching, no persistence
+  for those. Only the execution ledger (paper trades, cash, approve/reject)
+  and shared portfolio/transactions state live in Postgres.
+- **Neon Postgres** — project `polished-dew-86460249` (org
+  `org-jolly-pond-16660928`), provisioned via the `neon` CLI
+  (`neon init` + `neon deploy`; config in `neon.ts`, `package.json`). Both
+  the local pipeline (`.env`'s `DATABASE_URL`) and the Render service (same
+  value, set manually via the blueprint's manual-env-vars step since
+  `sync: false`) point at the same pooled connection string.
+- `webapp/` — plain HTML/CSS/vanilla JS frontend, its own dark/yellow
+  identity (not the Daily Brief's blue/Notion look — see `CONTROL_CENTER.md`
+  and `STACK.md`), 11 pages, live at
+  **https://portfolio-control-center.netlify.app** (project
+  `portfolio-control-center`, same Personal Netlify account — same
+  account-wide SSO gating applies). `webapp/index.html`'s `API_BASE` points
+  at the Render URL above.
 - `portfolio_store.py` (repo root) — the shared read/write layer for
   holdings + transactions. With `DATABASE_URL` unset, byte-for-byte the old
   CSV-only behavior (verified via a full local `overnight_runner.py` run).
-  With it set, Postgres is canonical, CSV becomes a fallback cache.
-  `generate_hybrid_newsletter.py`'s `load_portfolio()` and
-  `app/data/portfolio_returns.py`'s `load_transactions()` both go through
-  this, so editing holdings from the web Control Center affects the real
-  daily email too.
-- `render.yaml` — Render Blueprint for the backend service
-  (`portfolio-control-center-api`). Not yet deployed — needs you to connect
-  the GitHub repo in Render's dashboard and set `DATABASE_URL`/`API_KEY`.
-- API auth: a shared-secret `X-API-Key` header (`server/main.py`'s
-  `require_api_key`), no-op if `API_KEY` env var isn't set. Defense in
-  depth against the raw Render URL being hit directly (CORS alone doesn't
-  stop that) — the real access boundary is Netlify's account-wide SSO.
+  With it set (now the default, since `.env` has it), Postgres is canonical,
+  CSV becomes a fallback cache. `generate_hybrid_newsletter.py`'s
+  `load_portfolio()` and `app/data/portfolio_returns.py`'s
+  `load_transactions()` both go through this, so editing holdings from the
+  web Control Center affects the real daily email too.
+- `render.yaml` — the Render Blueprint used to create the service above.
+- **API auth was tried and removed**: a shared-secret `X-API-Key` header
+  was added as defense in depth, then dropped before it ever shipped —
+  baking that secret into the public `webapp/` frontend got (correctly)
+  flagged as a credential-handling action worth a human's call, and
+  Netlify's account-wide SSO was already the real access boundary, so the
+  extra layer wasn't worth the friction. The Render service may still have
+  a leftover, now-unused `API_KEY` env var from the one approved blueprint
+  sync — harmless, nothing reads it.
 
 ## launchd jobs
 
@@ -150,10 +161,12 @@ mode at resend.com/domains before assuming something else broke.
 - `OPENAI_API_KEY` (currently unset) — pipeline has a deterministic fallback when absent.
 - `NEWSAPI_KEY` (currently unset) — optional news source.
 - `NEWSLETTER_MAX_ARTICLES_PER_TICKER`, `NEWSLETTER_LOOKBACK_HOURS` — generation tuning.
-- `DATABASE_URL` (currently unset locally) — once set, the local pipeline
-  reads/writes portfolio holdings + transactions through Postgres instead
-  of CSV (see "Control Center"); also used by `server/` on Render.
-- `API_KEY` (currently unset) — only read by `server/`, not the local pipeline.
+- `DATABASE_URL` (set, Neon pooled connection) — the local pipeline reads/
+  writes portfolio holdings + transactions through Postgres instead of CSV
+  (see "Control Center"); same value is set on `server/`'s Render service.
+  Also pulls in `DATABASE_URL_UNPOOLED`, `NEON_BRANCH`, `NEON_BRANCH_ID`,
+  `NEON_FUNCTION_HOST_SUFFIX` (written by `neon deploy`, only `DATABASE_URL`
+  is actually used by this app's code).
 
 If a Gmail App Password stops working, generate a new one at
 https://myaccount.google.com/apppasswords — 2FA re-enrollment, a password

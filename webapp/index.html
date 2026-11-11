@@ -16,11 +16,7 @@
   // once deployed (see CONTROL_CENTER.md for the current value).
   window.API_BASE = (location.hostname === "localhost" || location.hostname === "127.0.0.1")
     ? "http://localhost:8000"
-    : "https://portfolio-control-center-api.onrender.com";
-  // Defense-in-depth only (see server/main.py's require_api_key) — the real
-  // access boundary is that only you can load this page at all, since the
-  // Netlify account it's on requires your own login to view any page on it.
-  window.API_KEY = "";
+    : "https://portfolio-control-center-api-te8l.onrender.com";
 </script>
 </head>
 <body>

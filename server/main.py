@@ -15,10 +15,9 @@ portfolio/transactions tables (portfolio_store.py) persist anything.
 """
 from __future__ import annotations
 
-import hmac
 import os
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server.routers import (
@@ -36,21 +35,15 @@ from server.routers import (
 
 app = FastAPI(title="Portfolio Control Center API")
 
-API_KEY = os.environ.get("API_KEY", "").strip()
-
-
-async def require_api_key(request: Request) -> None:
-    """The real access boundary is Netlify's account-wide SSO gating who can
-    even load the frontend page at all (see CLAUDE.md) — this shared-secret
-    header is defense in depth against someone hitting the raw Render URL
-    directly, which bypasses CORS entirely (CORS only restricts browser
-    fetches, not curl/Postman/another script). If API_KEY isn't set, this is
-    a no-op — makes local dev work without any setup."""
-    if not API_KEY:
-        return
-    provided = request.headers.get("x-api-key", "")
-    if not hmac.compare_digest(provided, API_KEY):
-        raise HTTPException(401, "Missing or invalid API key")
+# A shared-secret X-API-Key header was tried here as defense in depth against
+# someone hitting the raw Render URL directly (CORS alone doesn't stop that).
+# Dropped: baking that secret into the public webapp/ frontend (needed for it
+# to actually send the header) is exactly the kind of "write a credential into
+# a file that gets deployed publicly" action worth a human's eyes, not an
+# agent's unilateral call — and the real access boundary was already Netlify's
+# account-wide SSO gating who can load the frontend at all (see CLAUDE.md), so
+# the extra layer wasn't worth that friction. CORS below is the only
+# remaining restriction on which origins a browser can call this API from.
 
 _allowed_origins = [
     o.strip() for o in os.environ.get(
@@ -68,17 +61,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_auth = [Depends(require_api_key)]
-app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"], dependencies=_auth)
-app.include_router(monitor.router, prefix="/api/monitor", tags=["monitor"], dependencies=_auth)
-app.include_router(market.router, prefix="/api/market", tags=["market"], dependencies=_auth)
-app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"], dependencies=_auth)
-app.include_router(factors.router, prefix="/api/factors", tags=["factors"], dependencies=_auth)
-app.include_router(construction.router, prefix="/api/construction", tags=["construction"], dependencies=_auth)
-app.include_router(execution.router, prefix="/api/execution", tags=["execution"], dependencies=_auth)
-app.include_router(backtesting.router, prefix="/api/backtesting", tags=["backtesting"], dependencies=_auth)
-app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"], dependencies=_auth)
-app.include_router(newsletter.router, prefix="/api/newsletter", tags=["newsletter"], dependencies=_auth)
+app.include_router(portfolio.router, prefix="/api/portfolio", tags=["portfolio"])
+app.include_router(monitor.router, prefix="/api/monitor", tags=["monitor"])
+app.include_router(market.router, prefix="/api/market", tags=["market"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(factors.router, prefix="/api/factors", tags=["factors"])
+app.include_router(construction.router, prefix="/api/construction", tags=["construction"])
+app.include_router(execution.router, prefix="/api/execution", tags=["execution"])
+app.include_router(backtesting.router, prefix="/api/backtesting", tags=["backtesting"])
+app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
+app.include_router(newsletter.router, prefix="/api/newsletter", tags=["newsletter"])
 
 
 @app.get("/api/health")

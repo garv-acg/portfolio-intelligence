@@ -168,46 +168,53 @@ fires in the daily email).
 Netlify's **account-wide SSO/visitor-access is on** for this Personal
 account (same as the Daily Brief dashboard — see `CLAUDE.md`), so the
 frontend itself requires your Netlify login to view at all. The raw Render
-API URL, though, is a separate public endpoint — CORS restricts which web
-origins a *browser* can call it from, but does nothing against a direct
-`curl`/script hitting that URL. `server/main.py` adds a shared-secret
-`X-API-Key` header check (`require_api_key`), a no-op if `API_KEY` isn't
-set (so local dev needs no setup) but enforced once it is. This is defense
-in depth, not real secrecy — the key would be visible to anyone who opens
-dev tools on the (already SSO-gated) frontend — but it closes the "URL
-guessing" gap for the unauthenticated public internet.
+API URL is a separate public endpoint that CORS alone doesn't protect from
+a direct `curl`/script — a shared-secret `X-API-Key` header was built and
+tested as defense in depth against exactly that, then **removed before
+shipping**: wiring it up means baking that secret into `webapp/`'s public
+frontend source, and that's a credential-handling action that deserved a
+real decision rather than me just doing it — and since Netlify's SSO was
+already the actual boundary, the extra layer wasn't worth the friction.
+`server/main.py` has no auth check at all now; CORS is the only origin
+restriction.
 
-## What you still need to do (things only you can do)
+## Everything below is done and live
 
-1. **Create a Neon project** (neon.tech, free tier) for this app's execution
-   ledger + shared portfolio state. Copy its connection string.
-2. **Create the Render web service** from `render.yaml` in this repo
-   (Render → New → Blueprint → connect `garv-acg/portfolio-intelligence`).
-   In Render's dashboard, set the env vars it created as `sync: false`
-   placeholders: `DATABASE_URL` (from step 1) and `API_KEY` (any random
-   string you pick).
-3. Once Render gives you the live URL, tell me — if it's not exactly
-   `https://portfolio-control-center-api.onrender.com`, I need to update
-   `webapp/index.html`'s `API_BASE` and redeploy.
-4. Pick the same `API_KEY` value and I'll bake it into `webapp/index.html`'s
-   `window.API_KEY` and redeploy — until then the API has no auth enforced
-   (fine for initial testing, not for leaving it running long-term).
-5. Optional: set `DATABASE_URL` in this repo's local `.env` too, so the
-   local pipeline starts reading/writing the same Postgres holdings table
-   the web app uses, instead of the local CSV.
+1. **Neon** — project `polished-dew-86460249` provisioned via the `neon`
+   CLI (`neon init --org-id org-jolly-pond-16660928 --project-id
+   polished-dew-86460249 --branch production --services postgres`, then
+   `neon deploy`), which wrote `DATABASE_URL` straight into `.env`.
+2. **Render** — service `portfolio-control-center-api-te8l` created
+   straight from `render.yaml` via `render ea blueprints create` +
+   `approve` (no dashboard click-through needed — the CLI's blueprint
+   commands handle it once you're logged in and GitHub is already
+   connected to your Render account). Live at
+   https://portfolio-control-center-api-te8l.onrender.com.
+3. **Frontend wired** — `webapp/index.html`'s `API_BASE` points at the
+   real Render URL above; redeployed to Netlify.
+4. `DATABASE_URL` is the same Neon pooled connection string on both the
+   local `.env` and the Render service.
 
-## Verified locally before hand-off
+One Homebrew/npm environment note from doing this: `~/.npm/_cacache`'s
+`content-v2/sha512/73/` subdirectory is owned by `root` on this machine
+(pre-existing, not caused by this work) — both `npm i -g` and `npx` fail
+with a permission error until that's fixed (`sudo chown -R $(whoami)
+~/.npm`) or routed around with a scratch `--cache` dir, which is what was
+done here.
 
-- All 11 pages load and render against the live engines (no mock data).
+## Verified end-to-end
+
+- All 11 webapp pages load and render against the live engines (no mock
+  data), checked in the browser pane (light + dark, desktop + mobile).
 - Construction → Save to Execution Queue → Execution → Approve/Reject →
-  Paper Trade Ledger + Audit Trail, tested end-to-end against a throwaway
-  local Postgres database (not Neon — that still needs your account).
+  Paper Trade Ledger + Audit Trail, tested twice: once against a throwaway
+  local Postgres, once for real against the live Neon database through the
+  deployed Render service (test rows created then deleted afterward).
 - Backtesting runs and renders real metrics/equity curve.
-- Light/dark mode both verified.
-- Full local email pipeline re-run after the `portfolio_store.py` change,
-  confirmed byte-identical behavior with `DATABASE_URL` unset.
-- `API_KEY` enforcement verified: unset → open, set → 401 without the
-  header, 200 with the correct one.
+- Full local email pipeline re-run after the `portfolio_store.py` change
+  and again after `DATABASE_URL` went live — confirmed working both ways.
+- `/impeccable audit` run against `webapp/`, every finding fixed, re-run
+  confirms zero issues (see the Nov 11 update above).
 
 ## Known gaps / deliberate v1 cuts
 

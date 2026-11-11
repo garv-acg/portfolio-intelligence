@@ -4,17 +4,14 @@
   const API = window.API_BASE;
 
   // ── fetch helpers ────────────────────────────────────────────────────────
-  function authHeaders() {
-    return window.API_KEY ? { "x-api-key": window.API_KEY } : {};
-  }
   async function apiGet(path) {
-    const r = await fetch(API + path, { cache: "no-store", headers: authHeaders() });
+    const r = await fetch(API + path, { cache: "no-store" });
     if (!r.ok) throw new Error((await safeText(r)) || (r.status + " " + r.statusText));
     return r.json();
   }
   async function apiSend(method, path, body) {
     const r = await fetch(API + path, {
-      method, headers: { "Content-Type": "application/json", ...authHeaders() },
+      method, headers: { "Content-Type": "application/json" },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!r.ok) throw new Error((await safeText(r)) || (r.status + " " + r.statusText));
