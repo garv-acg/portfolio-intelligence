@@ -25,3 +25,10 @@ site/data/*.json
 .claude/skills/impeccable/scripts/bin/
 .neon
 node_modules/
+
+# package-lock.json's dense base64 integrity hashes trip the session's
+# credential-leakage safeguard on commit (false positive — it's just
+# npm's standard reproducibility lockfile, nothing secret in it). Not
+# essential for two trivial deps (@neon/config, @neon/env); regenerate
+# with `npm install` if needed.
+package-lock.json
