@@ -847,10 +847,21 @@ def refresh_macro_calendar_from_fred() -> None:
                         past = True
                     display = _fred_mom_pct(series) if past else ""
                 elif event == "FOMC Rate Decision":
-                    # Use FEDFUNDS to auto-populate the prior rate
-                    rate = _fred_rate(series)
-                    if rate and str(df.loc[mask, "prior"].values[0]) != rate:
-                        df.loc[mask, "prior"] = rate
+                    # Live current target range (band, e.g. "3.75-4.00%"), not a
+                    # single-point rate — matches how the range is actually quoted,
+                    # and stays correct automatically after every FOMC meeting
+                    # instead of needing a manual update to a hardcoded band.
+                    fed_range = current_fed_funds_range()
+                    band = f"{fed_range[0]:.2f}-{fed_range[1]:.2f}%" if fed_range else ""
+                    if band and str(df.loc[mask, "prior"].values[0]) != band:
+                        df.loc[mask, "prior"] = band
+                        changed = True
+                    # Keep "expected" in sync with the same live futures-implied
+                    # read used on the Fed Funds Probability row, instead of a
+                    # static "No change" guess that can silently go stale.
+                    prob = fetch_fed_funds_probability()
+                    if prob and str(df.loc[mask, "expected"].values[0]) != prob:
+                        df.loc[mask, "expected"] = prob
                         changed = True
                     continue
                 else:
@@ -872,12 +883,42 @@ def refresh_macro_calendar_from_fred() -> None:
         pass
 
 
+def current_fed_funds_range() -> tuple[float, float] | None:
+    """Live upper/lower bound of the Fed's target range from FRED (DFEDTARU/
+    DFEDTARL). Uses the authenticated observations endpoint, not the public
+    fredgraph.csv one — that one returns empty for these two series. Returns
+    None on failure."""
+    try:
+        from app.config.settings import settings as _settings
+        import requests as _req
+        api_key = getattr(_settings, "fred_api_key", None)
+        if not api_key:
+            return None
+        bounds = {}
+        for series_id, key in (("DFEDTARU", "upper"), ("DFEDTARL", "lower")):
+            r = _req.get(
+                "https://api.stlouisfed.org/fred/series/observations",
+                params={"series_id": series_id, "api_key": api_key, "file_type": "json",
+                        "sort_order": "desc", "limit": 1},
+                timeout=10,
+            )
+            obs = [o for o in r.json().get("observations", []) if o.get("value") not in (None, ".")]
+            if not obs:
+                return None
+            bounds[key] = float(obs[0]["value"])
+        return bounds["lower"], bounds["upper"]
+    except Exception:
+        return None
+
+
 def fetch_fed_funds_probability() -> str:
     """
     Fetches the current CME FedWatch no-change probability for the next FOMC meeting.
     Uses 30-day fed funds futures price from Yahoo Finance (ZQ contract).
     The implied rate = 100 - futures price.
-    Probability of no-change is inferred by comparing implied rate to current rate bands.
+    Probability of no-change is inferred by comparing implied rate to the live
+    current target range from FRED (never hardcoded — the range changes with
+    every FOMC meeting, and a stale hardcoded band gave false hike/cut signals).
 
     Falls back to a web search of growbeansprout.com if futures unavailable.
     Returns a display string like "96.5% no change" or "" if unavailable.
@@ -885,7 +926,8 @@ def fetch_fed_funds_probability() -> str:
     import re as _re
 
     # Method 1: Yahoo Finance fed funds futures
-    # June 2026 contract = ZQM26=F, July = ZQN26=F
+    # Yahoo lists these on the CBOT suffix, not the generic "=F" futures suffix
+    # (e.g. December 2026 = ZQZ26.CBT, not ZQZ26=F — the latter 404s).
     try:
         import requests as _req
         from datetime import date as _date
@@ -895,7 +937,7 @@ def fetch_fed_funds_probability() -> str:
         # Use next month's contract as proxy for next meeting
         next_month = today.month + 1 if today.month < 12 else 1
         next_year  = today.year if today.month < 12 else today.year + 1
-        symbol = f"ZQ{month_codes[next_month]}{str(next_year)[2:]}=F"
+        symbol = f"ZQ{month_codes[next_month]}{str(next_year)[2:]}.CBT"
 
         r = _req.get(
             f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
@@ -906,9 +948,9 @@ def fetch_fed_funds_probability() -> str:
             data  = r.json()
             price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
             implied_rate = round(100 - price, 3)
-            # Current rate is 3.50-3.75%; midpoint 3.625%
+            fed_range = current_fed_funds_range()
+            current_mid = (fed_range[0] + fed_range[1]) / 2 if fed_range else 3.625
             # If implied rate within 12.5bps of midpoint → likely no change
-            current_mid = 3.625
             if abs(implied_rate - current_mid) < 0.125:
                 prob = "~97% no change"
             elif implied_rate < current_mid - 0.125:
@@ -936,6 +978,30 @@ def fetch_fed_funds_probability() -> str:
     except Exception:
         pass
 
+    return ""
+
+
+# Official FOMC rate-decision dates (second day of each two-day meeting),
+# from https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+# (fetched 2026-11-11; page's "Last Update: October 28, 2026"). 2027 dates
+# were marked tentative on that page. Replaces an earlier "+7 weeks" guess
+# that didn't track the Fed's actual (irregular) meeting cadence and had
+# drifted to showing the wrong date as "today".
+_FOMC_RATE_DECISION_DATES = [
+    "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29",
+    "2026-09-16", "2026-10-28", "2026-12-09",
+    "2027-01-27", "2027-03-17", "2027-04-28", "2027-06-09", "2027-07-28",
+    "2027-09-15", "2027-10-27", "2027-12-08",
+]
+
+
+def next_fomc_meeting_date(after: "date | None" = None) -> str:
+    """First FOMC rate-decision date on/after `after` (default: today) from the
+    official schedule above. Returns "" if the known schedule has been exhausted."""
+    after = after or date.today()
+    for d_str in _FOMC_RATE_DECISION_DATES:
+        if date.fromisoformat(d_str) >= after:
+            return d_str
     return ""
 
 
@@ -969,8 +1035,12 @@ def _roll_macro_date_forward(release_date_str: str, event: str) -> str:
                 max_day = _cal.monthrange(year, month)[1]
                 d = d.replace(year=year, month=month, day=min(d.day, max_day))
             return str(d)
-        # FOMC: ~8 times a year (~6-7 week cadence)
+        # FOMC: look up the real published schedule rather than guessing a cadence
         if any(k in ev for k in ["fomc", "rate decision", "federal reserve"]):
+            known = next_fomc_meeting_date(date.today())
+            if known:
+                return known
+            # Known schedule exhausted (far enough in the future) — approximate
             import datetime as _dt
             while d < date.today():
                 d = d + _dt.timedelta(weeks=7)
@@ -1051,10 +1121,14 @@ def load_macro_events() -> list[dict]:
         # Inject Fed Funds probability
         fed_prob = fetch_fed_funds_probability()
         if fed_prob:
+            next_meeting = next_fomc_meeting_date(date.today())
+            fed_range = current_fed_funds_range()
             fmp_rows.append({
                 "event": "Fed Funds Probability", "release_date": "Daily",
                 "time": "", "days_until": "Daily", "importance": "High",
-                "actual": fed_prob, "expected": "", "prior": "3.50-3.75%",
+                "actual": fed_prob,
+                "expected": f"Next FOMC: {next_meeting}" if next_meeting else "",
+                "prior": f"{fed_range[0]:.2f}-{fed_range[1]:.2f}%" if fed_range else "N/A",
                 "source": "CME FedWatch", "changed_today": False,
             })
         return sorted(fmp_rows, key=_sort_key)
@@ -1109,9 +1183,11 @@ def load_macro_events() -> list[dict]:
     fed_prob = fetch_fed_funds_probability()
     for row in rows:
         if row.get("event") == "Fed Funds Probability" and fed_prob:
+            next_meeting = next_fomc_meeting_date(date.today())
+            fed_range = current_fed_funds_range()
             row["actual"]   = fed_prob
-            row["expected"] = "Next FOMC: Jun 17"
-            row["prior"]    = "3.50-3.75%"
+            row["expected"] = f"Next FOMC: {next_meeting}" if next_meeting else "N/A"
+            row["prior"]    = f"{fed_range[0]:.2f}-{fed_range[1]:.2f}%" if fed_range else "N/A"
 
     def _sort_key(item):
         # Daily items always last
@@ -1620,6 +1696,17 @@ _CSS = """
   a { color:#0369a1; text-decoration:none; }
   a:hover { text-decoration:underline; }
 
+  /* Hero stat row — mirrors the web dashboard's Portfolio Value + Today/Week/
+     Month/YTD tiles, so the email and dashboard read as the same product. */
+  .hero-grid  { display:grid; grid-template-columns:1.3fr 1fr 1fr 1fr 1fr; gap:10px; margin:0 0 12px; }
+  .hero-tile  { background:#ffffff; border:1px solid #e2e8f0; border-radius:10px;
+                padding:14px 16px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .hero-tile .label { font-size:10px; font-weight:700; text-transform:uppercase;
+                       letter-spacing:.06em; color:#94a3b8; }
+  .hero-tile .value { font-size:18px; font-weight:800; margin-top:8px; letter-spacing:-0.01em; color:#0f172a; }
+  .hero-figure .value { font-size:26px; letter-spacing:.1em; }
+  .hero-tile .sub   { font-size:11px; color:#64748b; margin-top:5px; }
+
   /* DARK MODE */
   @media (prefers-color-scheme: dark) {
     body           { background:#13161f !important; color:#e2e8f0 !important; }
@@ -1655,6 +1742,10 @@ _CSS = """
     .bar-value     { color:#64748b !important; }
     .footer        { color:#475569 !important; border-top-color:#28304a !important; }
     a              { color:#60a5fa !important; }
+    .hero-tile     { background:#1c2030 !important; border-color:#28304a !important; box-shadow:0 2px 8px rgba(0,0,0,.4) !important; }
+    .hero-tile .value { color:#f1f5f9 !important; }
+    .hero-tile .label { color:#64748b !important; }
+    .hero-tile .sub   { color:#94a3b8 !important; }
   }
 
   /* MOBILE */
@@ -1686,6 +1777,11 @@ _CSS = """
     .move-pill { font-size:11px !important; padding:2px 6px !important; }
     .tag       { font-size:10px !important; padding:2px 7px !important; }
     .footer    { font-size:10px !important; padding:10px 8px !important; }
+    .hero-grid { grid-template-columns:1fr 1fr !important; gap:6px !important; }
+    .hero-figure { grid-column:1 / -1 !important; }
+    .hero-tile { padding:10px 12px !important; }
+    .hero-tile .value { font-size:16px !important; }
+    .hero-figure .value { font-size:22px !important; }
   }
 </style>"""
 
@@ -2351,15 +2447,14 @@ def build_hybrid_newsletter() -> tuple[str, str]:
             "Ticker":       row.get("ticker", ""),
             "Sector":       row.get("sector", ""),
             "Weight":       pct(row.get("portfolio_weight_pct")),
-            "Market Value": money(row.get("market_value")),
+            "Market Value": "••••••",  # account $ value never shown in email — see P&L below
             "Daily":        pct(row.get("daily_move_pct")),
             "Weekly":       pct(row.get("weekly_move_pct")),
             "Monthly":      pct(row.get("monthly_move_pct")),
             "YTD":          pct(row.get("ytd_move_pct")),
             "52W":          f"{row.get('distance_from_52w_high_pct', 0):+.1f}%" if row.get("distance_from_52w_high_pct") is not None else "—",
             "P&L": (
-                f"{'+' if pnl_map.get(row.get('ticker','').upper(), {}).get('unreal_dollar', 0) >= 0 else ''}"
-                f"${abs(pnl_map.get(row.get('ticker','').upper(), {}).get('unreal_dollar', 0)):,.0f} "
+                # % only — the $ amount is omitted everywhere in the email (privacy)
                 f"({'+' if pnl_map.get(row.get('ticker','').upper(), {}).get('unreal_pct', 0) >= 0 else ''}"
                 f"{pnl_map.get(row.get('ticker','').upper(), {}).get('unreal_pct', 0):.1f}%)"
                 if row.get('ticker','').upper() in pnl_map else "—"
@@ -2373,7 +2468,7 @@ def build_hybrid_newsletter() -> tuple[str, str]:
         "Ticker":       "CASH",
         "Sector":       "—",
         "Weight":       "—",
-        "Market Value": "$1.51",
+        "Market Value": "••••••",
         "Daily":        "—",
         "Weekly":       "—",
         "Monthly":      "—",
@@ -2818,6 +2913,34 @@ def build_hybrid_newsletter() -> tuple[str, str]:
     else:
         sector_bars_html = ""
 
+    # ── Hero stat row — mirrors the web dashboard's Portfolio Value + Today/
+    # Week/Month/YTD tiles. The $ total is never shown in the email (privacy —
+    # unlike the dashboard's toggle, email can't reveal-on-click, so it's
+    # masked unconditionally here; % figures don't reveal account value).
+    def _hero_stat(label: str, port_val, spy_val) -> str:
+        css = "c-up" if (port_val or 0) >= 0 else "c-dn"
+        port_str = pct(port_val) if port_val is not None else "N/A"
+        spy_str = f"vs SPY {pct(spy_val)}" if spy_val is not None else ""
+        return (
+            f'<div class="hero-tile"><div class="label">{esc(label)}</div>'
+            f'<div class="value"><span class="{css}">{port_str}</span></div>'
+            f'<div class="sub">{esc(spy_str)}</div></div>'
+        )
+
+    _today_css = "c-up" if (port_daily or 0) >= 0 else "c-dn"
+    hero_html = (
+        '<div class="hero-grid">'
+        '<div class="hero-tile hero-figure"><div class="label">Portfolio Value</div>'
+        '<div class="value">••••••</div>'
+        f'<div class="sub"><span class="{_today_css}">'
+        f'{pct(port_daily) if port_daily is not None else "N/A"} today</span></div></div>'
+        + _hero_stat("Today", port_daily, spy_daily)
+        + _hero_stat("This Week", port_weekly, spy_weekly)
+        + _hero_stat("This Month", port_monthly, spy_monthly)
+        + _hero_stat("Year to Date", port_ytd, spy_ytd)
+        + "</div>"
+    )
+
     # ── HTML body ──────────────────────────────────────────────────────────────
     html_body = f"""
 <html lang="en">
@@ -2840,6 +2963,8 @@ def build_hybrid_newsletter() -> tuple[str, str]:
       <h1>Morning Market Brief</h1>
       <div class="subtitle">Portfolio performance · macro regime · catalysts · SEC filings · alerts — {esc(generated_at)}</div>
     </td></tr></table>
+
+    {hero_html}
 
     <div class="card">
       <h2>Executive Summary</h2>

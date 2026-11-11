@@ -22,6 +22,49 @@
     });
   }
 
+  // ── Entrance animation helpers (strong ease-out curve, not a built-in) ──────
+  const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+  function prefersReducedMotion() {
+    try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; }
+  }
+
+  // Counts a number up from 0 to its real value, re-running the same format
+  // function each frame so it reads correctly mid-count (money, %, etc).
+  function animateCountUp(el, target, formatFn, duration) {
+    if (target == null || isNaN(target)) return;
+    duration = duration || 700;
+    if (prefersReducedMotion()) { el.textContent = formatFn(target); return; }
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // strong ease-out
+      el.textContent = formatFn(target * eased);
+      if (t < 1) requestAnimationFrame(tick);
+      else el.textContent = formatFn(target);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function animateHeroNumbers() {
+    document.querySelectorAll("[data-countup]").forEach(function (el) {
+      const target = parseFloat(el.getAttribute("data-countup"));
+      const fmt = el.getAttribute("data-countup-fmt");
+      const formatFn = fmt === "pct" ? function (v) { return fmtPct(v); } : function (v) { return fmtMoney(v); };
+      animateCountUp(el, target, formatFn);
+    });
+  }
+
+  // ── Privacy toggle (hides $ account value; resets to hidden on every load
+  // so it's never accidentally left revealed from a previous visit) ─────────
+  function initPrivacy() {
+    const btn = document.getElementById("privacy-toggle");
+    btn.addEventListener("click", function () {
+      const revealed = document.body.classList.toggle("reveal-value");
+      btn.textContent = revealed ? "🙈 Hide value" : "👁 Show value";
+      btn.setAttribute("aria-pressed", String(revealed));
+    });
+  }
+
   // ── Formatting helpers ───────────────────────────────────────────────────
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -93,30 +136,63 @@
   }
 
   // ── Trend chart (portfolio value over time) with hover tooltip ─────────────
-  function renderTrendChart(container, points) {
-    const w = 920, h = 220, padL = 44, padR = 12, padT = 14, padB = 26;
+  function fmtAxisMoney(v) {
+    if (Math.abs(v) >= 1000) return (v < 0 ? "-$" : "$") + (Math.abs(v) / 1000).toFixed(1) + "K";
+    return (v < 0 ? "-$" : "$") + Math.round(Math.abs(v));
+  }
+
+  // Cumulative % return series for both the portfolio and a reconstructed SPY
+  // index (compounded from each day's spy_daily_pct), both rebased to 0% at
+  // the start of the window so they're directly comparable regardless of units.
+  function computeCompareSeries(points) {
+    const base = points[0].portfolio_value;
+    let spyFactor = 1;
+    return points.map(function (p, i) {
+      const portfolio_pct = base ? (p.portfolio_value / base - 1) * 100 : 0;
+      if (i > 0 && p.spy_daily_pct != null && !isNaN(p.spy_daily_pct)) {
+        spyFactor *= (1 + p.spy_daily_pct / 100);
+      }
+      return { portfolio_pct: portfolio_pct, spy_pct: (spyFactor - 1) * 100 };
+    });
+  }
+
+  function renderTrendChart(container, points, mode, animateIn) {
+    const w = 920, h = 220, padL = 56, padR = 12, padT = 14, padB = 26;
     if (!points || points.length < 2) {
       container.innerHTML = '<p class="empty">Not enough history yet — check back tomorrow. The dashboard builds its own trend line one day at a time.</p>';
       return;
     }
-    const values = points.map(function (p) { return p.portfolio_value; });
-    const min = Math.min.apply(null, values), max = Math.max.apply(null, values);
-    const range = (max - min) || Math.max(1, max * 0.02);
+    const compare = mode === "compare";
     const plotW = w - padL - padR, plotH = h - padT - padB;
     const stepX = points.length > 1 ? plotW / (points.length - 1) : 0;
-
     function xAt(i) { return padL + i * stepX; }
+
+    const series = compare ? computeCompareSeries(points) : null;
+    const values = compare
+      ? series.map(function (p) { return p.portfolio_pct; }).concat(series.map(function (p) { return p.spy_pct; }))
+      : points.map(function (p) { return p.portfolio_value; });
+    const min = Math.min.apply(null, values), max = Math.max.apply(null, values);
+    const range = (max - min) || Math.max(1, Math.abs(max) * 0.02 || 1);
     function yAt(v) { return padT + plotH - ((v - (min - range * 0.08)) / (range * 1.16)) * plotH; }
 
-    const linePts = points.map(function (p, i) { return [xAt(i), yAt(p.portfolio_value)]; });
-    const line = linePts.map(function (p, i) { return (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
-    const fillPath = line + " L" + xAt(points.length - 1).toFixed(1) + "," + (padT + plotH) + " L" + xAt(0).toFixed(1) + "," + (padT + plotH) + " Z";
+    function pathFor(vals) {
+      return vals.map(function (v, i) { return (i === 0 ? "M" : "L") + xAt(i).toFixed(1) + "," + yAt(v).toFixed(1); }).join(" ");
+    }
 
-    // Up to 5 gridlines
-    const gridLines = [];
+    const portfolioVals = compare ? series.map(function (p) { return p.portfolio_pct; }) : points.map(function (p) { return p.portfolio_value; });
+    const portfolioLine = pathFor(portfolioVals);
+    const portfolioFill = portfolioLine + " L" + xAt(points.length - 1).toFixed(1) + "," + (padT + plotH) + " L" + xAt(0).toFixed(1) + "," + (padT + plotH) + " Z";
+    const spyLine = compare ? pathFor(series.map(function (p) { return p.spy_pct; })) : "";
+
+    // Up to 5 gridlines + matching y-axis labels
+    const gridLines = [], yLabels = [];
     for (let i = 0; i <= 4; i++) {
       const gy = padT + (plotH / 4) * i;
       gridLines.push('<line x1="' + padL + '" x2="' + (w - padR) + '" y1="' + gy + '" y2="' + gy + '" stroke="var(--grid)" stroke-width="1"></line>');
+      const gv = (min - range * 0.08) + (range * 1.16) * (1 - i / 4);
+      const labelText = compare ? fmtPct(gv, 0) : fmtAxisMoney(gv);
+      const privacyAttr = compare ? "" : ' class="privacy-sensitive"';
+      yLabels.push('<text x="' + (padL - 8) + '" y="' + (gy + 3).toFixed(1) + '" font-size="10" fill="var(--text-muted)" text-anchor="end"' + privacyAttr + ">" + esc(labelText) + "</text>");
     }
 
     // X-axis labels: first, middle, last
@@ -128,14 +204,21 @@
     });
 
     const svgId = "trend-svg-" + Math.random().toString(36).slice(2);
+    const legend = compare
+      ? '<div class="trend-legend"><span><i></i>Portfolio</span><span><i class="dashed"></i>S&amp;P 500</span></div>'
+      : "";
+
     container.innerHTML =
+      legend +
       '<div class="trend-wrap">' +
       '<svg id="' + svgId + '" width="100%" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="xMidYMid meet">' +
       gridLines.join("") +
-      '<path d="' + fillPath + '" fill="var(--accent)" opacity="0.10"></path>' +
-      '<path d="' + line + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
+      (compare ? "" : '<path class="trend-fill" d="' + portfolioFill + '" fill="var(--accent)" opacity="0.10"></path>') +
+      '<path class="portfolio-line" d="' + portfolioLine + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
+      (compare ? '<path d="' + spyLine + '" fill="none" stroke="var(--text-muted)" stroke-width="1.6" stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round"></path>' : "") +
       '<circle class="hover-dot" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" style="opacity:0"></circle>' +
       '<line class="hover-cross trend-crosshair" style="opacity:0"></line>' +
+      yLabels.join("") +
       xLabels.join("") +
       "</svg>" +
       '<div class="trend-tooltip" id="' + svgId + '-tip"></div>' +
@@ -145,6 +228,26 @@
     const tip = document.getElementById(svgId + "-tip");
     const dot = svg.querySelector(".hover-dot");
     const cross = svg.querySelector(".hover-cross");
+
+    // Entrance only — the line draws itself in once, on first load. Re-renders
+    // from the "vs S&P 500" toggle skip this (animateIn=false): a value the
+    // user can click several times a visit should switch instantly, not replay
+    // a load-in every time.
+    if (animateIn && !prefersReducedMotion()) {
+      const line = svg.querySelector(".portfolio-line");
+      const fill = svg.querySelector(".trend-fill");
+      const len = line.getTotalLength();
+      line.style.strokeDasharray = String(len);
+      line.style.strokeDashoffset = String(len);
+      if (fill) fill.style.opacity = "0";
+      line.getBoundingClientRect(); // force layout so the transition below isn't coalesced with the initial state
+      line.style.transition = "stroke-dashoffset 700ms " + EASE_OUT;
+      line.style.strokeDashoffset = "0";
+      if (fill) {
+        fill.style.transition = "opacity 400ms " + EASE_OUT + " 350ms";
+        fill.style.opacity = "0.10";
+      }
+    }
 
     function nearestIndex(mx) {
       let best = 0, bestDist = Infinity;
@@ -161,7 +264,8 @@
       const mx = (evt.clientX - rect.left) * scale;
       const i = nearestIndex(mx);
       const p = points[i];
-      const px = xAt(i), py = yAt(p.portfolio_value);
+      const v = compare ? series[i].portfolio_pct : p.portfolio_value;
+      const px = xAt(i), py = yAt(v);
       dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.style.opacity = 1;
       cross.setAttribute("x1", px); cross.setAttribute("x2", px);
       cross.setAttribute("y1", padT); cross.setAttribute("y2", padT + plotH);
@@ -171,10 +275,12 @@
       tip.style.left = pxPercent + "px";
       tip.style.top = pyPercent + "px";
       tip.style.opacity = 1;
-      tip.innerHTML =
-        "<strong>" + fmtMoney(p.portfolio_value) + "</strong>" +
-        '<div class="muted" style="font-size:11px;margin-top:2px;">' + esc(p.date) +
-        (p.daily_pct != null ? " · " + fmtPct(p.daily_pct) : "") + "</div>";
+      tip.innerHTML = compare
+        ? "<strong>" + fmtPct(series[i].portfolio_pct) + "</strong> vs SPY " + fmtPct(series[i].spy_pct) +
+          '<div class="muted" style="font-size:11px;margin-top:2px;">' + esc(p.date) + "</div>"
+        : '<strong class="privacy-sensitive">' + fmtMoney(p.portfolio_value) + "</strong>" +
+          '<div class="muted" style="font-size:11px;margin-top:2px;">' + esc(p.date) +
+          (p.daily_pct != null ? " · " + fmtPct(p.daily_pct) : "") + "</div>";
     });
     svg.addEventListener("mouseleave", function () {
       dot.style.opacity = 0; cross.style.opacity = 0; tip.style.opacity = 0;
@@ -188,10 +294,14 @@
       const p = perf[period] || {};
       const port = p.portfolio, spy = p.spy;
       const vsSpy = (port != null && spy != null) ? port - spy : null;
+      const countupAttrs = port != null ? ' data-countup="' + port + '" data-countup-fmt="pct"' : "";
+      // Initial text is the zero-state when it's about to count up, so there's
+      // no flash of the final value before the entrance animation takes over.
+      const valueText = port != null ? fmtPct(0) : fmtPct(port);
       return (
         '<div class="card stat-tile">' +
         '<div class="label">' + label + "</div>" +
-        '<div class="value tnum ' + dirClass(port) + '">' + fmtPct(port) + "</div>" +
+        '<div class="value tnum ' + dirClass(port) + '"' + countupAttrs + '>' + valueText + "</div>" +
         '<div class="delta ' + dirClass(port) + '">' + arrow(port) + " vs SPY " + fmtPct(spy) + "</div>" +
         '<div class="vs">' + (vsSpy != null ? (vsSpy >= 0 ? "Beating SPY by " + fmtPct(Math.abs(vsSpy)).replace("+", "") : "Trailing SPY by " + fmtPct(Math.abs(vsSpy)).replace("+", "")) : "") + "</div>" +
         "</div>"
@@ -201,7 +311,9 @@
       '<div class="hero">' +
       '<div class="card hero-figure">' +
       '<div class="label">Portfolio value</div>' +
-      '<div class="value tnum">' + fmtMoney(data.portfolio_value) + "</div>" +
+      '<div class="value tnum privacy-sensitive"' +
+      (data.portfolio_value != null ? ' data-countup="' + data.portfolio_value + '" data-countup-fmt="money"' : "") +
+      '>' + fmtMoney(data.portfolio_value != null ? 0 : data.portfolio_value) + "</div>" +
       '<div class="sub ' + dirClass((perf.today || {}).portfolio) + '">' + arrow((perf.today || {}).portfolio) + " " + fmtPct((perf.today || {}).portfolio) + " today</div>" +
       "</div>" +
       stat("Today", "today") +
@@ -286,7 +398,9 @@
   function renderTrendCard(history) {
     return (
       '<div class="card">' +
-      '<h2>Portfolio value — last ' + (history || []).length + " days</h2>" +
+      '<h2>Portfolio value — last ' + (history || []).length + ' days' +
+      '<button class="chip-toggle" id="trend-compare-toggle" type="button" aria-pressed="false">vs S&amp;P 500</button>' +
+      "</h2>" +
       '<div id="trend-chart"></div>' +
       "</div>"
     );
@@ -339,17 +453,36 @@
     return '<div class="card"><h2>Alerts <span class="count">' + alerts.length + "</span></h2>" + rows + "</div>";
   }
 
+  function macroValueLine(m) {
+    const parts = [];
+    const isNA = function (v) { return v == null || v === "" || String(v).toUpperCase() === "N/A"; };
+    if (!isNA(m.actual)) parts.push("Actual " + m.actual);
+    if (!isNA(m.expected)) parts.push("Est " + m.expected);
+    if (!isNA(m.prior)) parts.push("Prior " + m.prior);
+    return parts.join(" · ");
+  }
+
   function renderCatalysts(data) {
     const earnings = (data.catalysts || []).map(function (e) {
-      return { label: "<b>" + esc(e.Ticker) + "</b> earnings", date: e.Date, days: e.Days };
+      return { label: "<b>" + esc(e.Ticker) + "</b> earnings", date: e.Date, days: e.Days, sub: "" };
     });
     const macro = (data.macro_events || []).map(function (m) {
-      return { label: "<b>" + esc(m.event || m.Event || "") + "</b>", date: m.release_date || m.Date, days: null };
+      return {
+        label: "<b>" + esc(m.event || m.Event || "") + "</b>",
+        date: m.release_date || m.Date,
+        days: m.days_until || m.Days,
+        sub: macroValueLine(m),
+      };
     });
     const combined = earnings.concat(macro).filter(function (c) { return c.date; }).slice(0, 8);
     if (!combined.length) return "";
     const rows = combined.map(function (c) {
-      return '<div class="list-row"><div class="left">' + c.label + '</div><div class="right">' + esc(c.days || c.date) + "</div></div>";
+      return (
+        '<div class="list-row stacked"><div class="list-row-main"><div class="left">' + c.label +
+        '</div><div class="right">' + esc(c.days || c.date) + "</div></div>" +
+        (c.sub ? '<div class="list-row-sub">' + esc(c.sub) + "</div>" : "") +
+        "</div>"
+      );
     }).join("");
     return '<div class="card"><h2>What to watch</h2>' + rows + "</div>";
   }
@@ -472,7 +605,18 @@
       '<div class="layout"><div class="col">' + main + '</div><div class="col">' + side + "</div></div>";
 
     const trendEl = document.getElementById("trend-chart");
-    if (trendEl) renderTrendChart(trendEl, history);
+    const compareBtn = document.getElementById("trend-compare-toggle");
+    let trendMode = "value";
+    if (trendEl) renderTrendChart(trendEl, history, trendMode, true); // true: draw-in plays once, on load
+    if (compareBtn && trendEl) {
+      compareBtn.addEventListener("click", function () {
+        trendMode = trendMode === "value" ? "compare" : "value";
+        compareBtn.setAttribute("aria-pressed", String(trendMode === "compare"));
+        renderTrendChart(trendEl, history, trendMode, false); // a toggle the user can click repeatedly switches instantly
+      });
+    }
+
+    animateHeroNumbers();
   }
 
   function renderError(message) {
@@ -481,6 +625,7 @@
   }
 
   initTheme();
+  initPrivacy();
 
   Promise.all([
     fetch("data/latest.json", { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("latest.json " + r.status); return r.json(); }),

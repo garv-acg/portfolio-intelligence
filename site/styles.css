@@ -136,6 +136,11 @@ a:hover { text-decoration: underline; }
 }
 .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
+/* ── Privacy (hide $ account value) ─────────────────────────────────── */
+.privacy-sensitive { filter: blur(7px); transition: filter 150ms ease; }
+body.reveal-value .privacy-sensitive { filter: none; }
+#privacy-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
 /* ── Hero row ────────────────────────────────────────────────────────── */
 .hero {
   display: grid;
@@ -152,6 +157,7 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   padding: 18px 20px;
+  min-width: 0;
 }
 .hero-figure .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
 .hero-figure .value { font-size: 40px; font-weight: 700; line-height: 1.1; margin-top: 6px; letter-spacing: -0.015em; }
@@ -174,9 +180,9 @@ a:hover { text-decoration: underline; }
   align-items: start;
 }
 @media (max-width: 920px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
 }
-.col { display: flex; flex-direction: column; gap: 14px; }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 .card h2 {
   margin: 0 0 14px;
@@ -230,7 +236,8 @@ tr:last-child td { border-bottom: none; }
 .spark { display: block; }
 .spark .line { fill: none; stroke-width: 1.6; }
 .spark .fill { opacity: 0.10; }
-.trend-wrap { position: relative; }
+.trend-wrap { position: relative; min-width: 0; }
+.trend-wrap svg { display: block; width: 100%; min-width: 0; }
 .trend-tooltip {
   position: absolute; pointer-events: none; opacity: 0;
   transition: opacity 80ms ease;
@@ -239,6 +246,28 @@ tr:last-child td { border-bottom: none; }
   box-shadow: var(--shadow-card); white-space: nowrap; transform: translate(-50%, -110%);
 }
 .trend-crosshair { stroke: var(--baseline); stroke-width: 1; }
+.chip-toggle {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-pill);
+  padding: 4px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.chip-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.chip-toggle[aria-pressed="true"] {
+  background: var(--accent-wash); border-color: var(--accent); color: var(--accent);
+}
+.trend-legend { display: flex; gap: 16px; font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.trend-legend span { display: flex; align-items: center; gap: 5px; }
+.trend-legend i { width: 14px; height: 2px; border-radius: 2px; display: inline-block; background: var(--accent); }
+.trend-legend i.dashed { background: repeating-linear-gradient(to right, var(--text-muted) 0 4px, transparent 4px 7px); }
 
 /* ── Ranked bars (sector exposure) ──────────────────────────────────── */
 .bar-row { display: grid; grid-template-columns: 140px 1fr 52px; gap: 10px; align-items: center; margin: 9px 0; }
@@ -274,6 +303,9 @@ tr:last-child td { border-bottom: none; }
 .list-row .left { color: var(--text-secondary); }
 .list-row .left b { color: var(--text-primary); }
 .list-row .right { color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.list-row.stacked { display: block; }
+.list-row.stacked .list-row-main { display: flex; justify-content: space-between; gap: 10px; }
+.list-row-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
 
 /* ── News ────────────────────────────────────────────────────────────── */
 .news-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
@@ -294,4 +326,8 @@ tr:last-child td { border-bottom: none; }
   .hero-figure { grid-column: 1 / -1; }
   .shell { padding: 14px 12px 48px; }
   .bar-row { grid-template-columns: 90px 1fr 46px; }
+  /* Holdings table has 8 columns — too many to fit 375px even after the
+     overflow fixes above, so let it scroll horizontally within its own
+     card rather than widen the page. */
+  .card > table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
