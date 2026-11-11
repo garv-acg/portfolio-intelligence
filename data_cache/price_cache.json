@@ -1,10 +1,10 @@
 {
   "AAPL": {
-    "price": 297.010009765625,
-    "previous_close": 298.010009765625,
-    "source": "Yahoo Finance",
+    "price": 348.51,
+    "previous_close": 350.69,
+    "source": "Alpha Vantage",
     "provider_symbol": "AAPL",
-    "as_of": "2026-06-22T20:37:03.709435+00:00"
+    "as_of": "2026-11-11T13:03:35.296659+00:00"
   },
   "MSFT": {
     "price": 423.5400085449219,
@@ -13,18 +13,18 @@
     "as_of": "2026-05-18T23:49:17.899821+00:00"
   },
   "NVDA": {
-    "price": 208.64999389648438,
-    "previous_close": 210.69000244140625,
-    "source": "Yahoo Finance",
+    "price": 168.89,
+    "previous_close": 178.67,
+    "source": "Alpha Vantage",
     "provider_symbol": "NVDA",
-    "as_of": "2026-06-22T20:37:02.928497+00:00"
+    "as_of": "2026-11-10T23:40:09.156404+00:00"
   },
   "AMZN": {
-    "price": 232.79,
-    "previous_close": 244.39,
+    "price": 270.87,
+    "previous_close": 266.93,
     "source": "Alpha Vantage",
     "provider_symbol": "AMZN",
-    "as_of": "2026-06-22T20:37:03.112128+00:00"
+    "as_of": "2026-11-10T23:39:43.894384+00:00"
   },
   "GOOGL": {
     "price": 396.94000244140625,
@@ -82,24 +82,24 @@
     "as_of": "2026-06-22T20:37:04.698600+00:00"
   },
   "SPOT": {
-    "price": 459.67,
-    "previous_close": 468.08,
+    "price": 606.22,
+    "previous_close": 609.1,
     "source": "Alpha Vantage",
     "provider_symbol": "SPOT",
-    "as_of": "2026-06-22T20:37:01.905442+00:00"
+    "as_of": "2026-11-11T13:03:31.958101+00:00"
   },
   "AVGO": {
-    "price": 392.1300048828125,
-    "previous_close": 411.3500061035156,
-    "source": "Yahoo Finance",
+    "price": 331.98,
+    "previous_close": 319.48,
+    "source": "Alpha Vantage",
     "provider_symbol": "AVGO",
-    "as_of": "2026-06-22T20:37:02.670673+00:00"
+    "as_of": "2026-11-10T23:40:07.322119+00:00"
   },
   "GE": {
-    "price": 355.1199951171875,
-    "previous_close": 357.6400146484375,
-    "source": "Yahoo Finance",
+    "price": 337.91,
+    "previous_close": 335.54,
+    "source": "Alpha Vantage",
     "provider_symbol": "GE",
-    "as_of": "2026-06-22T20:37:03.433734+00:00"
+    "as_of": "2026-11-10T23:40:49.516958+00:00"
   }
 }
