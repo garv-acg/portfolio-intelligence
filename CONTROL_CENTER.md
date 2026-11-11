@@ -1,11 +1,70 @@
 # Control Center — design rationale & setup
 
 A full rewrite of `newsletter_control_center.py` (the Streamlit "Control
-Center") into a FastAPI backend + a Notion-styled vanilla-JS frontend on
-Netlify. Companion to `DESIGN_RATIONALE.md` (the Daily Brief dashboard) —
-same design system, different product: that one is a read-only morning
-brief, this one is an editable workbench (edit holdings, run backtests,
-approve paper trades).
+Center") into a FastAPI backend + a vanilla-JS frontend on Netlify.
+
+**Update (Nov 11):** the first version below reused the Daily Brief
+dashboard's exact design tokens (same blue, same light-first palette) —
+functional, but it read as a reskin rather than its own product, and an
+`/impeccable audit` pass turned up real bugs underneath the surface
+(unlabeled form inputs, keyboard-inaccessible tabs, a primary-button
+contrast failure, a mobile layout that buried every page's content below a
+full screen of nav links). Both were fixed in the same pass — see "Visual
+identity" below for what changed and why, and "Audit findings fixed" for
+the correctness work. Companion to `DESIGN_RATIONALE.md` (the Daily Brief
+dashboard) for the original design process this one builds on.
+
+## Visual identity
+
+Installed the Design Stack (`STACK.md`) specifically to do this properly:
+the ClickHouse `DESIGN.md` anchor (near-black canvas, electric-yellow
+voltage, confident weight-700 sans) that was added as a reference during
+stack setup is now actually *used* — as a deviate-from anchor, not copied
+wholesale, per Impeccable's own guidance.
+
+- **A persistent dark sidebar rail**, independent of the light/dark theme
+  toggle — like VS Code, Linear, or a Vercel dashboard. The main content
+  area still supports both themes; the rail doesn't, by design. This single
+  choice is what makes the two products feel different at a glance, even
+  before anything else loads.
+- **Electric yellow (`#faff69`) as a scarce brand accent** — primary
+  buttons, the active nav indicator, slider thumbs. Always paired with
+  near-black text on top of it, which is *why* it also happens to fix the
+  contrast bug (see below): yellow-on-near-black clears WCAG AA by a wide
+  margin regardless of what's behind it.
+- **Archivo**, not Inter. The ClickHouse anchor documents Inter: Impeccable's
+  own slop detector flags Inter as one of six overused AI-UI fonts
+  (`overused-font` rule) the moment it's applied broadly. Swapped to Archivo
+  — same confident weight-700 + negative-tracking character, not on that
+  list — and persisted the substitution as a disclosed, narrow
+  `.impeccable/config.json` ignore rather than silently diverging from the
+  anchor or silently keeping a flagged font.
+- Financial semantic colors (good/warning/serious/critical green/amber/red)
+  are **untouched** — they're a separate, CVD-validated system from the
+  dataviz skill and must never be confused with the yellow brand accent.
+
+## Audit findings fixed (this pass)
+
+From the `/impeccable audit` run against `webapp/`:
+- **P1** — every form `<label>` now has a matching `for`/`id` pair (was
+  visual-only association, invisible to screen readers).
+- **P1** — Portfolio's Holdings/Transactions tabs are real `<button
+  role="tab" aria-selected>` elements now, not clickable `<div>`s — keyboard-
+  reachable, properly announced.
+- **P1** — primary-button contrast (was 3.6:1 white-on-blue, fails AA) fixed
+  by construction via the yellow/near-black accent pairing above.
+- **P2** — mobile nav no longer buries page content below a full screen of
+  links: the sidebar collapses into a hamburger-triggered drawer below
+  900px.
+- **P2** — active-nav-item contrast (was 4.4:1, needs 4.5:1) and the 10px
+  nav-group-labels (below the 11px functional-text floor) both fixed.
+- **P2** — the narrative box's left-border accent (a recognized AI-slop
+  pattern) replaced with a plain bordered card.
+- **P3** — table `<th>` cells now carry explicit `scope="col"`.
+- Re-ran the detector against Overview/Construction/Execution after fixing:
+  zero findings on all three, down from the font-overuse flag it caught
+  immediately after the first color/type pass (resolved by the Archivo
+  swap above).
 
 ## Why a full rewrite, not a restyle
 

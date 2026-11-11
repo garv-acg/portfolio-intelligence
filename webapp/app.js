@@ -41,7 +41,7 @@
   function table(rows, columns) {
     // columns: [{key, label, num, fmt}]
     if (!rows || !rows.length) return '<p class="empty">No data.</p>';
-    const thead = columns.map(c => `<th class="${c.num ? "num" : ""}">${esc(c.label)}</th>`).join("");
+    const thead = columns.map(c => `<th scope="col" class="${c.num ? "num" : ""}">${esc(c.label)}</th>`).join("");
     const body = rows.map(r => "<tr>" + columns.map(c => {
       const raw = r[c.key];
       const val = c.fmt ? c.fmt(raw, r) : esc(raw == null ? "—" : raw);
@@ -81,6 +81,22 @@
     });
   })();
 
+  // ── Mobile nav (hamburger drawer) ──────────────────────────────────────────
+  (function initMobileNav() {
+    const sidebar = document.getElementById("sidebar");
+    const backdrop = document.getElementById("sidebar-backdrop");
+    const toggle = document.getElementById("menu-toggle");
+    function setOpen(open) {
+      sidebar.classList.toggle("open", open);
+      backdrop.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+    toggle.addEventListener("click", () => setOpen(!sidebar.classList.contains("open")));
+    backdrop.addEventListener("click", () => setOpen(false));
+    sidebar.addEventListener("click", (e) => { if (e.target.closest(".nav-item")) setOpen(false); });
+    window.addEventListener("hashchange", () => setOpen(false));
+  })();
+
   // ── Pages ────────────────────────────────────────────────────────────────
   const PAGES = [
     { id: "overview", label: "Overview", group: "Workspace" },
@@ -100,7 +116,7 @@
     const groups = [...new Set(PAGES.map(p => p.group))];
     document.getElementById("nav").innerHTML = groups.map(g => {
       const items = PAGES.filter(p => p.group === g).map(p =>
-        `<button class="nav-item ${p.id === activeId ? "active" : ""}" data-page="${p.id}"><span class="dot"></span>${esc(p.label)}</button>`
+        `<button class="nav-item ${p.id === activeId ? "active" : ""}" data-page="${p.id}"${p.id === activeId ? ' aria-current="page"' : ""}><span class="dot"></span>${esc(p.label)}</button>`
       ).join("");
       return `<div class="nav-group-label">${esc(g)}</div>${items}`;
     }).join("");
@@ -148,15 +164,15 @@
   // ── Portfolio ────────────────────────────────────────────────────────────
   async function pagePortfolio(main) {
     main.innerHTML = `<div class="page-header"><h1>Portfolio</h1><div class="sub">Edit holdings and the transaction log — shared with the daily email pipeline.</div></div>
-      <div class="tabs">
-        <div class="tab active" data-tab="holdings">Holdings</div>
-        <div class="tab" data-tab="transactions">Transactions</div>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="holdings">Holdings</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="transactions">Transactions</button>
       </div>
-      <div id="tab-body"></div>`;
+      <div id="tab-body" role="tabpanel"></div>`;
     const body = main.querySelector("#tab-body");
     main.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
-      main.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
-      t.classList.add("active");
+      main.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", "false"));
+      t.setAttribute("aria-selected", "true");
       t.dataset.tab === "holdings" ? renderHoldingsTab(body) : renderTxnsTab(body);
     }));
     await renderHoldingsTab(body);
@@ -166,13 +182,13 @@
     await withLoading(body, async () => {
       const holdings = await apiGet("/api/portfolio/holdings");
       const rowHtml = (h, i) => `<tr data-i="${i}">
-          <td><input type="text" class="h-ticker" value="${esc(h.ticker)}" style="width:90px;"></td>
-          <td class="num"><input type="number" class="h-shares" value="${h.shares}" step="0.001" style="width:110px;text-align:right;"></td>
-          <td class="num"><input type="number" class="h-cost" value="${h.cost_basis}" step="0.01" style="width:110px;text-align:right;"></td>
-          <td><button class="btn danger small h-remove">Remove</button></td>
+          <td><input type="text" class="h-ticker" value="${esc(h.ticker)}" aria-label="Ticker" style="width:90px;"></td>
+          <td class="num"><input type="number" class="h-shares" value="${h.shares}" step="0.001" aria-label="Shares" style="width:110px;text-align:right;"></td>
+          <td class="num"><input type="number" class="h-cost" value="${h.cost_basis}" step="0.01" aria-label="Cost basis" style="width:110px;text-align:right;"></td>
+          <td><button class="btn danger small h-remove" aria-label="Remove ${esc(h.ticker) || "row"}">Remove</button></td>
         </tr>`;
       body.innerHTML = card("Holdings", `
-        <div class="table-wrap"><table><thead><tr><th>Ticker</th><th class="num">Shares</th><th class="num">Cost Basis</th><th></th></tr></thead>
+        <div class="table-wrap"><table><thead><tr><th scope="col">Ticker</th><th scope="col" class="num">Shares</th><th scope="col" class="num">Cost Basis</th><th scope="col"></th></tr></thead>
         <tbody id="holdings-rows">${holdings.map(rowHtml).join("")}</tbody></table></div>
         <div class="btn-row" style="margin-top:14px;">
           <button class="btn" id="add-row">Add Row</button>
@@ -212,12 +228,12 @@
       const txns = await apiGet("/api/portfolio/transactions");
       body.innerHTML = card("Add Transaction", `
           <div class="grid grid-4">
-            <div class="field"><label>Date</label><input type="date" id="t-date" value="${new Date().toISOString().slice(0,10)}"></div>
-            <div class="field"><label>Ticker</label><input type="text" id="t-ticker"></div>
-            <div class="field"><label>Action</label><select id="t-action"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
-            <div class="field"><label>Shares</label><input type="number" id="t-shares" step="0.001"></div>
-            <div class="field"><label>Price</label><input type="number" id="t-price" step="0.01"></div>
-            <div class="field" style="grid-column:span 2;"><label>Notes</label><input type="text" id="t-notes"></div>
+            <div class="field"><label for="t-date">Date</label><input type="date" id="t-date" value="${new Date().toISOString().slice(0,10)}"></div>
+            <div class="field"><label for="t-ticker">Ticker</label><input type="text" id="t-ticker"></div>
+            <div class="field"><label for="t-action">Action</label><select id="t-action"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
+            <div class="field"><label for="t-shares">Shares</label><input type="number" id="t-shares" step="0.001"></div>
+            <div class="field"><label for="t-price">Price</label><input type="number" id="t-price" step="0.01"></div>
+            <div class="field" style="grid-column:span 2;"><label for="t-notes">Notes</label><input type="text" id="t-notes"></div>
           </div>
           <div class="btn-row" style="margin-top:12px;"><button class="btn primary" id="add-txn">Add Transaction</button></div>
           <div id="txn-msg" class="small" style="margin-top:8px;"></div>
@@ -351,10 +367,10 @@
       <div class="card">
         <h2>Construction Settings</h2>
         <div class="grid grid-4">
-          <div class="field"><label>Max Position Weight <span class="val" id="v-max_pos">22%</span></label><input type="range" id="max_pos" min="5" max="40" value="22"></div>
-          <div class="field"><label>Max Sector Weight <span class="val" id="v-max_sector">40%</span></label><input type="range" id="max_sector" min="20" max="70" value="40"></div>
-          <div class="field"><label>Min Position Weight <span class="val" id="v-min_pos">2%</span></label><input type="range" id="min_pos" min="0" max="10" value="2"></div>
-          <div class="field"><label>Rebalance Threshold <span class="val" id="v-thresh">3%</span></label><input type="range" id="thresh" min="1" max="10" value="3"></div>
+          <div class="field"><label for="max_pos">Max Position Weight <span class="val" id="v-max_pos">22%</span></label><input type="range" id="max_pos" min="5" max="40" value="22"></div>
+          <div class="field"><label for="max_sector">Max Sector Weight <span class="val" id="v-max_sector">40%</span></label><input type="range" id="max_sector" min="20" max="70" value="40"></div>
+          <div class="field"><label for="min_pos">Min Position Weight <span class="val" id="v-min_pos">2%</span></label><input type="range" id="min_pos" min="0" max="10" value="2"></div>
+          <div class="field"><label for="thresh">Rebalance Threshold <span class="val" id="v-thresh">3%</span></label><input type="range" id="thresh" min="1" max="10" value="3"></div>
         </div>
         <div class="btn-row" style="margin-top:14px;"><button class="btn primary" id="run-construction">Run Construction</button></div>
       </div>
@@ -421,12 +437,12 @@
       <div class="card">
         <h2>Backtest Settings</h2>
         <div class="grid grid-4">
-          <div class="field"><label>Benchmark</label><input type="text" id="bt-bench" value="SPY"></div>
-          <div class="field"><label>Lookback Days <span class="val" id="v-bt-look">180</span></label><input type="range" id="bt-look" min="90" max="365" value="180" step="15"></div>
-          <div class="field"><label>Rebalance Freq (Days) <span class="val" id="v-bt-freq">21</span></label><input type="range" id="bt-freq" min="5" max="63" value="21"></div>
-          <div class="field"><label>Txn Cost (bps) <span class="val" id="v-bt-cost">10</span></label><input type="range" id="bt-cost" min="0" max="50" value="10"></div>
+          <div class="field"><label for="bt-bench">Benchmark</label><input type="text" id="bt-bench" value="SPY"></div>
+          <div class="field"><label for="bt-look">Lookback Days <span class="val" id="v-bt-look">180</span></label><input type="range" id="bt-look" min="90" max="365" value="180" step="15"></div>
+          <div class="field"><label for="bt-freq">Rebalance Freq (Days) <span class="val" id="v-bt-freq">21</span></label><input type="range" id="bt-freq" min="5" max="63" value="21"></div>
+          <div class="field"><label for="bt-cost">Txn Cost (bps) <span class="val" id="v-bt-cost">10</span></label><input type="range" id="bt-cost" min="0" max="50" value="10"></div>
         </div>
-        <div class="field" style="max-width:220px;margin-top:10px;"><label>Initial Capital</label><input type="number" id="bt-cap" value="10000" step="1000"></div>
+        <div class="field" style="max-width:220px;margin-top:10px;"><label for="bt-cap">Initial Capital</label><input type="number" id="bt-cap" value="10000" step="1000"></div>
         <div class="btn-row" style="margin-top:14px;"><button class="btn primary" id="run-bt">Run Backtest</button></div>
       </div>
       <div id="bt-result"></div>`;
@@ -500,7 +516,7 @@
         statCard("Traded Value", fmtMoney(summary.total_paper_traded_value)) +
         statCard("Simulated Cash", fmtMoney(summary.cash_balance)) +
         `</div>` +
-        card("Simulated Cash Balance", `<div class="field" style="max-width:220px;"><label>Set Balance</label><input type="number" id="cash-val" value="${summary.cash_balance}" step="100"></div>
+        card("Simulated Cash Balance", `<div class="field" style="max-width:220px;"><label for="cash-val">Set Balance</label><input type="number" id="cash-val" value="${summary.cash_balance}" step="100"></div>
             <div class="btn-row" style="margin-top:10px;"><button class="btn" id="save-cash">Update</button></div>`) +
         card("Pending Recommendations", pending.length ? renderPendingTable(pending) : '<p class="empty">No pending recommendations. Save some from Construction first.</p>') +
         card("Paper Trade Ledger", table(ledger, [
@@ -523,11 +539,11 @@
     const rows = pending.map(r => `<tr>
         <td>${esc(r.id)}</td><td><b>${esc(r.ticker)}</b></td><td>${esc(r.action)}</td>
         <td class="num tnum">${fmtMoney(r.trade_value)}</td><td class="num tnum">${fmtPct(r.weight_drift_pct, 1)}</td>
-        <td><input type="text" class="rec-note" placeholder="note" style="width:120px;"></td>
-        <td><input type="number" class="rec-price" placeholder="sim. price" style="width:90px;"></td>
+        <td><input type="text" class="rec-note" placeholder="note" aria-label="Decision note for ${esc(r.ticker)}" style="width:120px;"></td>
+        <td><input type="number" class="rec-price" placeholder="sim. price" aria-label="Simulated execution price for ${esc(r.ticker)}" style="width:90px;"></td>
         <td class="btn-row"><button class="btn primary small rec-approve" data-id="${r.id}">Approve</button><button class="btn danger small rec-reject" data-id="${r.id}">Reject</button></td>
       </tr>`).join("");
-    return `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Ticker</th><th>Action</th><th class="num">Trade $</th><th class="num">Drift</th><th>Note</th><th>Sim. Price</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="table-wrap"><table><thead><tr><th scope="col">ID</th><th scope="col">Ticker</th><th scope="col">Action</th><th scope="col" class="num">Trade $</th><th scope="col" class="num">Drift</th><th scope="col">Note</th><th scope="col">Sim. Price</th><th scope="col"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
   function wirePendingActions(body, main) {

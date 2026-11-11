@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "archivo",
+        "createdAt": "2026-11-11T13:12:50.805Z",
+        "reason": "Deliberate deviation from the ClickHouse DESIGN.md anchor's documented Inter: Impeccable's own detector flags Inter as an overused AI-UI font. Archivo keeps the same weight-700 + negative-tracking confident-sans character the anchor calls for, without the generic-font tell."
+      }
+    ]
+  }
+}
