@@ -1,33 +1,35 @@
-/* Control Center — its own identity, deviating from the ClickHouse DESIGN.md
-   anchor (near-black canvas, electric-yellow voltage, confident weight-700
-   sans) built for this Operate-mode workbench rather than copying it.
-   Typeface swapped from the anchor's Inter to Archivo — Impeccable's own
-   detector flags Inter as an overused AI-UI font; Archivo keeps the same
-   confident-sans character without that tell (see .impeccable/config.json's
-   design-system-font ignore for the disclosed exception). The sidebar stays
-   dark regardless of theme (a persistent "rail," like VS Code/Linear/Vercel)
-   — content area still supports light/dark. Financial semantic colors
-   (good/warning/serious/critical) are untouched: they're a separate,
-   validated, CVD-safe system and must never be confused with the brand
-   accent. */
+/* Control Center — merged into the same visual identity as the Daily Brief
+   dashboard (site/styles.css) on 2026-11-14, so the two read as one product
+   under one URL instead of two. Token values below are ported verbatim from
+   there, not reinvented — this file used to intentionally deviate (its own
+   near-black/electric-yellow "Operate mode" identity, Archivo typeface,
+   permanently-dark sidebar rail); all of that is retired in favor of the
+   shared look. Financial semantic colors (good/warning/serious/critical)
+   were never part of that divergence — they're the same validated, CVD-safe
+   system in both apps and are untouched here. */
 
 :root {
   color-scheme: light;
-  --page:            #faf9f5;
-  --surface:         #ffffff;
+  --page:            #f9f9f7;
+  --surface:         #fcfcfb;
   --surface-raised:  #ffffff;
-  --border:           rgba(10,10,10,0.09);
-  --border-strong:    rgba(10,10,10,0.16);
-  --text-primary:    #0a0a0a;
-  --text-secondary:  #4a4a46;
-  --text-muted:      #83827c;
+  --border:           rgba(11,11,11,0.10);
+  --border-strong:    rgba(11,11,11,0.16);
+  --text-primary:    #0b0b0b;
+  --text-secondary:  #52514e;
+  --text-muted:      #898781;
 
-  /* Primary action color — near-black in light mode (yellow-on-white would
-     fail contrast as body/link color; reserved for the dark sidebar and
-     dark content mode instead, where it's always high-contrast). */
-  --accent:          #0a0a0a;
+  --accent:          #2a78d6;
   --accent-ink:      #ffffff;
-  --accent-wash:     rgba(10,10,10,0.06);
+  --accent-wash:     rgba(42,120,214,0.08);
+  --accent-ring:     rgba(42,120,214,0.35);
+  /* Filled buttons need a darker shade than --accent for white text to clear
+     WCAG AA (4.5:1) — #2a78d6/white is only 4.41:1, and #3987e5 (the dark-
+     mode accent) is worse at 3.64:1. --accent itself is tuned to read well
+     as a thin link/line/border, not as a large flat fill under body text,
+     so this is a separate token, not a change to the shared accent. Same
+     value in both themes (6.29:1 either way) rather than two more to track. */
+  --accent-strong:   #1a5fb4;
 
   --good:            #0ca30c;
   --warning:         #fab219;
@@ -36,28 +38,27 @@
   --good-text:       #006300;
   --grid:            #e1e0d9;
   --baseline:        #c3c2b7;
-  --radius-card: 12px;
+  --radius-card: 14px;
   --radius-pill: 999px;
-  --shadow-card: 0 1px 2px rgba(10,10,10,0.04), 0 8px 24px -16px rgba(10,10,10,0.10);
+  --shadow-card: 0 1px 2px rgba(11,11,11,0.04), 0 8px 24px -16px rgba(11,11,11,0.10);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page:            #0a0a0a;
-    --surface:         #141413;
-    --surface-raised:  #1a1a19;
-    --border:           rgba(255,255,255,0.09);
+    --page:            #0d0d0d;
+    --surface:         #1a1a19;
+    --surface-raised:  #202020;
+    --border:           rgba(255,255,255,0.10);
     --border-strong:    rgba(255,255,255,0.16);
     --text-primary:    #f0efec;
     --text-secondary:  #c3c2b7;
-    --text-muted:      #8c8c86;
+    --text-muted:      #898781;
 
-    /* Brand voltage: electric yellow, scarce — primary buttons, active nav,
-       the one stat-callout. Always paired with near-black text (on-primary),
-       which keeps contrast far above AA regardless of what's behind it. */
-    --accent:          #faff69;
-    --accent-ink:      #0a0a0a;
-    --accent-wash:     rgba(250,255,105,0.10);
+    --accent:          #3987e5;
+    --accent-ink:      #ffffff;
+    --accent-wash:     rgba(57,135,229,0.12);
+    --accent-ring:     rgba(57,135,229,0.4);
+    --accent-strong:   #1a5fb4;
 
     --good:            #0ca30c;
     --warning:         #fab219;
@@ -71,31 +72,23 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0a0a0a; --surface: #141413; --surface-raised: #1a1a19;
-  --border: rgba(255,255,255,0.09); --border-strong: rgba(255,255,255,0.16);
-  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8c8c86;
-  --accent: #faff69; --accent-ink: #0a0a0a; --accent-wash: rgba(250,255,105,0.10);
+  --page: #0d0d0d; --surface: #1a1a19; --surface-raised: #202020;
+  --border: rgba(255,255,255,0.10); --border-strong: rgba(255,255,255,0.16);
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+  --accent: #3987e5; --accent-ink: #ffffff; --accent-wash: rgba(57,135,229,0.12); --accent-ring: rgba(57,135,229,0.4); --accent-strong: #1a5fb4;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #e66767; --good-text: #0ca30c;
   --grid: #2c2c2a; --baseline: #383835;
   --shadow-card: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.6);
 }
 
-/* The sidebar rail — constant across both themes */
-:root {
-  --rail-bg:       #0a0a0a;
-  --rail-ink:      #f0efec;
-  --rail-muted:    #8c8c86;
-  --rail-border:   rgba(255,255,255,0.08);
-  --rail-active-bg: rgba(250,255,105,0.12);
-  --rail-active-ink: #faff69;
-  --rail-hover-bg: rgba(255,255,255,0.06);
-}
+/* Sidebar now follows the content theme instead of staying dark always —
+   it's just --surface/--text tokens, same as every other surface. */
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; }
 body {
   background: var(--page); color: var(--text-primary);
-  font-family: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); text-decoration: none; }
@@ -105,40 +98,41 @@ h1, h2, h3, .mark, .page-header h1 { font-weight: 700; letter-spacing: -0.02em; 
 
 .shell { display: flex; min-height: 100vh; }
 
-/* ── Sidebar rail (always dark, regardless of content theme) ───────────── */
+/* ── Sidebar (now follows the content theme, like the Daily Brief topbar —
+   no longer a permanently-dark rail) ───────────────────────────────────── */
 .sidebar {
-  width: 240px; flex: none; background: var(--rail-bg); color: var(--rail-ink);
-  border-right: 1px solid var(--rail-border);
+  width: 240px; flex: none; background: var(--surface); color: var(--text-primary);
+  border-right: 1px solid var(--border);
   padding: 20px 14px; display: flex; flex-direction: column; gap: 18px;
   position: sticky; top: 0; height: 100vh; overflow-y: auto;
 }
 .sidebar .brand { padding: 0 8px; }
-.sidebar .brand .mark { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; color: var(--rail-ink); }
-.sidebar .brand .tag { font-size: 11.5px; color: var(--rail-muted); margin-top: 2px; }
-.nav-group-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--rail-muted); padding: 0 8px; margin: 6px 0 2px; }
+.sidebar .brand .mark { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; color: var(--text-primary); }
+.sidebar .brand .tag { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.nav-group-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); padding: 0 8px; margin: 6px 0 2px; }
 .nav-item {
   display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 8px;
-  font-size: 13.5px; color: var(--rail-ink); cursor: pointer; border: none; background: transparent;
+  font-size: 13.5px; color: var(--text-primary); cursor: pointer; border: none; background: transparent;
   width: 100%; text-align: left; font-family: inherit;
 }
-.nav-item:hover { background: var(--rail-hover-bg); }
-.nav-item.active { background: var(--rail-active-bg); color: var(--rail-active-ink); font-weight: 600; }
-.nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rail-muted); flex: none; }
-.nav-item.active .dot { background: var(--rail-active-ink); }
+.nav-item:hover { background: var(--accent-wash); }
+.nav-item.active { background: var(--accent-wash); color: var(--accent); font-weight: 600; }
+.nav-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); flex: none; }
+.nav-item.active .dot { background: var(--accent); }
 .sidebar .bottom { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
-.sidebar .bottom a { color: var(--rail-muted); }
-.theme-toggle { border: 1px solid var(--rail-border); background: transparent; color: var(--rail-ink); border-radius: var(--radius-pill); padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
-.theme-toggle:hover { border-color: var(--rail-active-ink); color: var(--rail-active-ink); }
+.sidebar .bottom a { color: var(--text-muted); }
+.theme-toggle { border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-secondary); border-radius: var(--radius-pill); padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
+.theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
 .sidebar-backdrop { display: none; }
 
 /* Hamburger — hidden on desktop */
 .menu-toggle {
   display: none; position: fixed; top: 14px; left: 14px; z-index: 40;
-  width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--rail-border);
-  background: var(--rail-bg); cursor: pointer; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--surface); cursor: pointer; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
 }
-.menu-toggle span { display: block; width: 18px; height: 2px; background: var(--rail-ink); border-radius: 1px; }
+.menu-toggle span { display: block; width: 18px; height: 2px; background: var(--text-primary); border-radius: 1px; }
 
 /* ── Main ────────────────────────────────────────────────────────────── */
 .main { flex: 1; min-width: 0; padding: 24px 32px 64px; max-width: 1200px; }
@@ -186,7 +180,7 @@ tr:last-child td { border-bottom: none; }
 /* ── Controls ────────────────────────────────────────────────────────── */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); display: flex; justify-content: space-between; }
-.field label .val { font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 600; font-family: "JetBrains Mono", ui-monospace, monospace; }
+.field label .val { font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 600; font-family: ui-monospace, monospace; }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 input[type="text"], input[type="number"], input[type="date"], select, textarea {
   font-family: inherit; font-size: 13.5px; padding: 8px 10px; border-radius: 8px;
@@ -199,7 +193,7 @@ button.btn {
   border: 1px solid var(--border-strong); background: var(--surface-raised); color: var(--text-primary); cursor: pointer;
 }
 button.btn:hover { border-color: var(--accent); }
-button.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+button.btn.primary { background: var(--accent-strong); color: var(--accent-ink); border-color: var(--accent-strong); font-weight: 700; }
 button.btn.primary:hover { opacity: 0.88; color: var(--accent-ink); }
 button.btn.danger { color: var(--critical); border-color: var(--critical); background: transparent; }
 button.btn.danger:hover { background: color-mix(in srgb, var(--critical) 10%, transparent); }

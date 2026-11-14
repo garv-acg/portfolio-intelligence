@@ -8,6 +8,12 @@
         "value": "archivo",
         "createdAt": "2026-11-11T13:12:50.805Z",
         "reason": "Deliberate deviation from the ClickHouse DESIGN.md anchor's documented Inter: Impeccable's own detector flags Inter as an overused AI-UI font. Archivo keeps the same weight-700 + negative-tracking confident-sans character the anchor calls for, without the generic-font tell."
+      },
+      {
+        "rule": "design-system-font",
+        "value": "helvetica",
+        "createdAt": "2026-11-14T00:39:59.888Z",
+        "reason": "Deliberate 2026-11-14 merge/reskin: Control Center dropped its own Archivo/ClickHouse-anchor identity to share the Daily Brief dashboard's exact system-font stack, per the founder's explicit request to merge the two apps and match their look."
       }
     ]
   }

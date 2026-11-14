@@ -16,6 +16,17 @@ dashboard) for the original design process this one builds on.
 
 ## Visual identity
 
+**Update (2026-11-14):** everything below this paragraph describes the
+identity that's now **retired**. The two Netlify sites were merged into one
+(see `CLAUDE.md`'s "Merged with Control Center" note) and, at the founder's
+request, Control Center was reskinned to share the Daily Brief dashboard's
+exact look rather than keep its own — the near-black/electric-yellow
+identity, the permanently-dark sidebar rail, and Archivo are all gone,
+replaced by `site/styles.css`'s tokens verbatim (blue `#2a78d6`/`#3987e5`
+accent, the system-font stack, a theme-following sidebar). Kept below for
+the historical reasoning, since it's still a legitimate pattern worth
+knowing about — just not the one in use here anymore.
+
 Installed the Design Stack (`STACK.md`) specifically to do this properly:
 the ClickHouse `DESIGN.md` anchor (near-black canvas, electric-yellow
 voltage, confident weight-700 sans) that was added as a reference during
