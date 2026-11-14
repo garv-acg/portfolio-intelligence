@@ -14,7 +14,7 @@ Primary user is the tool's owner/operator — an individual managing their own r
 
 Two linked surfaces built from one data pipeline:
 1. **Daily Portfolio Brief** — a morning-brief control center: daily email + a published dashboard (site/) showing portfolio performance, macro regime, alerts, catalysts, and news. Read-only, generated once a day on a local schedule.
-2. **Control Center** (server/ + webapp/) — an editable workbench: edit holdings/transactions, run factor-driven portfolio construction with live constraint sliders, backtest strategies against a benchmark, and run a paper-trading execution blotter (approve/reject recommended trades, track simulated cash and a trade ledger).
+2. **Control Center** (server/ + site/control-center/, merged under the same site/URL as the dashboard above) — an editable workbench: edit holdings/transactions, run factor-driven portfolio construction with live constraint sliders, backtest strategies against a benchmark, and run a paper-trading execution blotter (approve/reject recommended trades, track simulated cash and a trade ledger).
 
 Success means the owner can check real portfolio state from anywhere, and practice/test rebalancing decisions without risking real capital, without either surface ever showing or implying fabricated data.
 

@@ -22,7 +22,14 @@
     });
   }
 
-  // ── Entrance animation helpers (strong ease-out curve, not a built-in) ──────
+  // ── Entrance choreography ────────────────────────────────────────────────
+  // Every card (except Headline/Executive Summary, which just read as text)
+  // reveals itself the moment it scrolls into view, not only once on page
+  // load — a chart or bar sitting below the fold used to finish its one-shot
+  // animation before anyone scrolled down to see it. Each content type gets
+  // its own native motion: numbers count up, bars grow from a baseline,
+  // SVG lines draw themselves, everything else cascades in staggered rows.
+  // CSS owns every curve/duration; JS only measures paths and flips classes.
   const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
   function prefersReducedMotion() {
     try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; }
@@ -32,7 +39,7 @@
   // function each frame so it reads correctly mid-count (money, %, etc).
   function animateCountUp(el, target, formatFn, duration) {
     if (target == null || isNaN(target)) return;
-    duration = duration || 700;
+    duration = duration || 900;
     if (prefersReducedMotion()) { el.textContent = formatFn(target); return; }
     const start = performance.now();
     function tick(now) {
@@ -45,13 +52,53 @@
     requestAnimationFrame(tick);
   }
 
-  function animateHeroNumbers() {
-    document.querySelectorAll("[data-countup]").forEach(function (el) {
+  // Arms an SVG path to draw itself in: measures its real length so the
+  // dasharray/offset are exact, then leaves the actual transition to CSS
+  // (`.path-draw.in-view`). Safe to call on any <path>, any time after it's
+  // in the DOM (sparklines are re-armed each time their card reveals).
+  function armPathDraw(path) {
+    if (!path) return;
+    try {
+      const len = path.getTotalLength();
+      path.style.strokeDasharray = String(len);
+      path.style.strokeDashoffset = String(len);
+      path.classList.add("path-draw");
+    } catch (e) { /* path not renderable yet — skip, it'll just show static */ }
+  }
+
+  // Fires once per card the first time it scrolls into view: reveals the
+  // card itself (CSS handles cascade/bars via descendant selectors), counts
+  // up any numbers, and draws any armed SVG lines inside it.
+  function revealCard(card) {
+    card.classList.add("in-view");
+    card.querySelectorAll("[data-countup]").forEach(function (el) {
       const target = parseFloat(el.getAttribute("data-countup"));
       const fmt = el.getAttribute("data-countup-fmt");
       const formatFn = fmt === "pct" ? function (v) { return fmtPct(v); } : function (v) { return fmtMoney(v); };
       animateCountUp(el, target, formatFn);
     });
+    card.querySelectorAll(".path-draw").forEach(function (p) { p.classList.add("in-view"); });
+  }
+
+  function initScrollReveal() {
+    const cards = Array.from(document.querySelectorAll(".card")).filter(function (c) {
+      return !c.classList.contains("headline-card") && !c.classList.contains("exec-summary");
+    });
+    cards.forEach(function (c) { c.classList.add("reveal"); });
+
+    if (prefersReducedMotion()) {
+      cards.forEach(revealCard);
+      return;
+    }
+    const io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          revealCard(entry.target);
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -10% 0px" });
+    cards.forEach(function (c) { io.observe(c); });
   }
 
   // ── Privacy toggle (hides $ account value; resets to hidden on every load
@@ -229,24 +276,14 @@
     const dot = svg.querySelector(".hover-dot");
     const cross = svg.querySelector(".hover-cross");
 
-    // Entrance only — the line draws itself in once, on first load. Re-renders
-    // from the "vs S&P 500" toggle skip this (animateIn=false): a value the
-    // user can click several times a visit should switch instantly, not replay
-    // a load-in every time.
+    // Arm the line to draw itself in when its card scrolls into view (see
+    // initScrollReveal/revealCard). Toggle-triggered re-renders (animateIn
+    // =false) skip arming — a value the user can click several times a visit
+    // switches instantly instead of replaying a load-in every time.
     if (animateIn && !prefersReducedMotion()) {
-      const line = svg.querySelector(".portfolio-line");
+      armPathDraw(svg.querySelector(".portfolio-line"));
       const fill = svg.querySelector(".trend-fill");
-      const len = line.getTotalLength();
-      line.style.strokeDasharray = String(len);
-      line.style.strokeDashoffset = String(len);
-      if (fill) fill.style.opacity = "0";
-      line.getBoundingClientRect(); // force layout so the transition below isn't coalesced with the initial state
-      line.style.transition = "stroke-dashoffset 700ms " + EASE_OUT;
-      line.style.strokeDashoffset = "0";
-      if (fill) {
-        fill.style.transition = "opacity 400ms " + EASE_OUT + " 350ms";
-        fill.style.opacity = "0.10";
-      }
+      if (fill) fill.classList.add("reveal-fade");
     }
 
     function nearestIndex(mx) {
@@ -607,7 +644,7 @@
     const trendEl = document.getElementById("trend-chart");
     const compareBtn = document.getElementById("trend-compare-toggle");
     let trendMode = "value";
-    if (trendEl) renderTrendChart(trendEl, history, trendMode, true); // true: draw-in plays once, on load
+    if (trendEl) renderTrendChart(trendEl, history, trendMode, true); // true: arm the draw-in for when it scrolls into view
     if (compareBtn && trendEl) {
       compareBtn.addEventListener("click", function () {
         trendMode = trendMode === "value" ? "compare" : "value";
@@ -616,7 +653,13 @@
       });
     }
 
-    animateHeroNumbers();
+    // Arm every holdings sparkline the same way as the main chart, then hand
+    // everything to the scroll-reveal system — it decides when each card
+    // (and the paths inside it) actually plays, including these.
+    if (!prefersReducedMotion()) {
+      document.querySelectorAll(".spark .line").forEach(armPathDraw);
+    }
+    initScrollReveal();
   }
 
   function renderError(message) {

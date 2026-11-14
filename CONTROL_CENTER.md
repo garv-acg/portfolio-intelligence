@@ -122,12 +122,14 @@ the Streamlit app, unrelated to its looks:
 ## Architecture
 
 ```
-webapp/ (Netlify: portfolio-control-center.netlify.app)
-  vanilla HTML/CSS/JS, same design tokens as site/styles.css.
-  11 pages, client-side router (#hash), fetches server/ as a JSON API.
+site/control-center/ (formerly webapp/ — merged 2026-11-14, now served at
+  portfolio-intelligence-brief.netlify.app/control-center/ instead of its
+  own separate Netlify site/login)
+  vanilla HTML/CSS/JS. 11 pages, client-side router (#hash), fetches
+  server/ as a JSON API.
        │
-       ▼ fetch (x-api-key header, defense in depth — see below)
-server/ (Render: portfolio-control-center-api.onrender.com)
+       ▼ fetch (CORS-restricted to the merged site's origin — see "Auth" below)
+server/ (Render: portfolio-control-center-api-te8l.onrender.com)
   FastAPI. Every "live data" route (Monitor, Market Workbench, Analytics,
   Factors, Construction, Backtesting, Alerts) recomputes fresh from Yahoo/
   FRED/SEC on each request — no caching, no persistence, same engines
@@ -167,16 +169,19 @@ fires in the daily email).
 
 Netlify's **account-wide SSO/visitor-access is on** for this Personal
 account (same as the Daily Brief dashboard — see `CLAUDE.md`), so the
-frontend itself requires your Netlify login to view at all. The raw Render
-API URL is a separate public endpoint that CORS alone doesn't protect from
-a direct `curl`/script — a shared-secret `X-API-Key` header was built and
-tested as defense in depth against exactly that, then **removed before
-shipping**: wiring it up means baking that secret into `webapp/`'s public
-frontend source, and that's a credential-handling action that deserved a
-real decision rather than me just doing it — and since Netlify's SSO was
-already the actual boundary, the extra layer wasn't worth the friction.
-`server/main.py` has no auth check at all now; CORS is the only origin
-restriction.
+frontend itself requires your Netlify login to view at all — and since
+Control Center is now served under that same dashboard site (merged
+2026-11-14), there's exactly one login covering both instead of two. The raw
+Render API URL is a separate public endpoint that CORS alone doesn't protect
+from a direct `curl`/script — a shared-secret `X-API-Key` header was built
+and tested as defense in depth against exactly that, then **removed before
+shipping**: wiring it up means baking that secret into the public frontend
+source, and that's a credential-handling action that deserved a real
+decision rather than me just doing it — and since Netlify's SSO was already
+the actual boundary, the extra layer wasn't worth the friction.
+`server/main.py` has no auth check at all now; CORS (now restricted to
+`https://portfolio-intelligence-brief.netlify.app`, the merged origin) is
+the only origin restriction.
 
 ## Everything below is done and live
 

@@ -48,7 +48,10 @@ app = FastAPI(title="Portfolio Control Center API")
 _allowed_origins = [
     o.strip() for o in os.environ.get(
         "ALLOWED_ORIGINS",
-        "https://portfolio-control-center.netlify.app",
+        # The webapp/ frontend now lives at /control-center/ under the same
+        # Netlify site as the Daily Brief dashboard (merged 2026-11-14) —
+        # CORS is origin-only (scheme+host+port), so the path doesn't matter.
+        "https://portfolio-intelligence-brief.netlify.app",
     ).split(",") if o.strip()
 ]
 

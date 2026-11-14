@@ -12,12 +12,6 @@
       "runtimeExecutable": ".venv/bin/python",
       "runtimeArgs": ["-m", "uvicorn", "server.main:app", "--port", "8000", "--reload"],
       "port": 8000
-    },
-    {
-      "name": "control-center-web",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8744", "--directory", "webapp"],
-      "port": 8744
     }
   ]
 }

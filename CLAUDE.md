@@ -48,10 +48,23 @@ notes. Short version:
   regenerated fresh by every run, not source.
 - Deployed via `netlify deploy --prod --dir=site` (already linked/authed on
   this machine via `.netlify/state.json`, also gitignored) — **not** a
-  Netlify-Git-triggered build. There is no server, database, or API route.
+  Netlify-Git-triggered build. The dashboard itself has no server, database,
+  or API route (Control Center, nested under this same deploy, does — see
+  below).
 - Live at **https://portfolio-intelligence-brief.netlify.app** (Netlify
   project `portfolio-intelligence-brief`, under the **Personal** Netlify
   account/team, project id `1b6a2736-6d0a-4ce2-8603-543eb63d0073`).
+- **Merged with Control Center 2026-11-14** — the two used to be separate
+  Netlify sites with separate logins ("two access points" was the founder's
+  own complaint). `site/control-center/` (formerly its own `webapp/`
+  top-level folder) now deploys as part of this same `netlify deploy --prod
+  --dir=site` call, reachable at `/control-center/` under this one URL/SSO
+  login. The Daily Brief's topbar links to it; Control Center's sidebar
+  links back. No code changes were needed in either app to move — both
+  already used relative asset paths and hostname-based (not path-based) API
+  routing. The old standalone `portfolio-control-center.netlify.app` site
+  still exists on Netlify but is no longer deployed to; decommission it
+  there whenever convenient.
 - That Personal Netlify account has **account-wide SSO/visitor-access
   enforcement on** (`account_sso_login_context: all`), so the live URL
   requires a Netlify login to view — kept intentionally (real portfolio/P&L
@@ -91,13 +104,12 @@ design writeup and architecture. Short version:
   the local pipeline (`.env`'s `DATABASE_URL`) and the Render service (same
   value, set manually via the blueprint's manual-env-vars step since
   `sync: false`) point at the same pooled connection string.
-- `webapp/` — plain HTML/CSS/vanilla JS frontend, its own dark/yellow
-  identity (not the Daily Brief's blue/Notion look — see `CONTROL_CENTER.md`
-  and `STACK.md`), 11 pages, live at
-  **https://portfolio-control-center.netlify.app** (project
-  `portfolio-control-center`, same Personal Netlify account — same
-  account-wide SSO gating applies). `webapp/index.html`'s `API_BASE` points
-  at the Render URL above.
+- `site/control-center/` (formerly `webapp/`, moved 2026-11-14 when the two
+  sites were merged into one — see "Merged with the Daily Brief dashboard"
+  below) — plain HTML/CSS/vanilla JS frontend, 11 pages, live at
+  **https://portfolio-intelligence-brief.netlify.app/control-center/**.
+  `index.html`'s `API_BASE` points at the Render URL above regardless of
+  path (hostname-based, not path-based).
 - `portfolio_store.py` (repo root) — the shared read/write layer for
   holdings + transactions. With `DATABASE_URL` unset, byte-for-byte the old
   CSV-only behavior (verified via a full local `overnight_runner.py` run).

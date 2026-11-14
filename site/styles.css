@@ -33,6 +33,12 @@
   --radius-card:     14px;
   --radius-pill:     999px;
   --shadow-card:      0 1px 2px rgba(11,11,11,0.04), 0 8px 24px -16px rgba(11,11,11,0.10);
+  --shadow-card-hover: 0 2px 4px rgba(11,11,11,0.06), 0 16px 32px -16px rgba(11,11,11,0.22);
+
+  /* Entrance choreography: clean & confident for reveals/bars (matches the
+     dividend/stock-list reference), a snappier pop reserved for hover only. */
+  --ease-out-strong: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-pop:         cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -61,6 +67,7 @@
     --grid:            #2c2c2a;
     --baseline:        #383835;
     --shadow-card:      0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.6);
+    --shadow-card-hover: 0 2px 4px rgba(0,0,0,0.4), 0 20px 40px -16px rgba(0,0,0,0.7);
   }
 }
 :root[data-theme="dark"] {
@@ -84,6 +91,7 @@
   --grid:            #2c2c2a;
   --baseline:        #383835;
   --shadow-card:      0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -16px rgba(0,0,0,0.6);
+  --shadow-card-hover: 0 2px 4px rgba(0,0,0,0.4), 0 20px 40px -16px rgba(0,0,0,0.7);
 }
 
 * { box-sizing: border-box; }
@@ -125,6 +133,7 @@ a:hover { text-decoration: underline; }
   font-size: 12px; color: var(--text-muted);
 }
 .theme-toggle {
+  display: inline-block;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text-secondary);
@@ -133,6 +142,7 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
+  text-decoration: none;
 }
 .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -159,6 +169,81 @@ body.reveal-value .privacy-sensitive { filter: none; }
   padding: 18px 20px;
   min-width: 0;
 }
+
+/* ── Hover pop — every card is a touchable surface ───────────────────── */
+@media (hover: hover) and (pointer: fine) {
+  .card { transition: transform 180ms var(--ease-pop), box-shadow 180ms ease; }
+  .card:hover { transform: translateY(-3px) scale(1.015); box-shadow: var(--shadow-card-hover); }
+}
+
+/* ── Scroll-reveal entrance (JS: site/app.js initScrollReveal/revealCard) ─
+   Every card except Headline/Executive Summary reveals on scroll, each
+   content type in its own native motion: cards cascade, bars grow from
+   their own left edge, SVG lines draw themselves (see .path-draw below). */
+.card.reveal { opacity: 0; transform: translateY(18px); transition: opacity 550ms var(--ease-out-strong), transform 550ms var(--ease-out-strong); }
+.card.reveal.in-view { opacity: 1; transform: translateY(0); }
+/* Once revealed, hand `transform`'s transition back to the hover-pop timing
+   above — otherwise `.card.reveal`'s higher specificity wins forever and
+   every hover plays the slow 550ms entrance curve instead of the 180ms pop. */
+@media (hover: hover) and (pointer: fine) {
+  .card.reveal.in-view { transition: opacity 550ms var(--ease-out-strong), transform 180ms var(--ease-pop), box-shadow 180ms ease; }
+}
+
+.card.reveal .bar-fill,
+.card.reveal .meter-fill { transform: scaleX(0); transform-origin: left; transition: transform 650ms var(--ease-out-strong); }
+.card.reveal.in-view .bar-fill,
+.card.reveal.in-view .meter-fill { transform: scaleX(1); }
+/* ":nth-child(N of S)" counts only among siblings matching S — every one of
+   these cards has an <h2> title before the first row, which threw off a
+   plain :nth-child(N) by one (and scrambled Analyst's two interleaved
+   .list-row groups entirely). */
+.card.reveal .bar-row:nth-child(1 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(1 of .meter-row) .meter-fill { transition-delay: 0ms; }
+.card.reveal .bar-row:nth-child(2 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(2 of .meter-row) .meter-fill { transition-delay: 70ms; }
+.card.reveal .bar-row:nth-child(3 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(3 of .meter-row) .meter-fill { transition-delay: 140ms; }
+.card.reveal .bar-row:nth-child(4 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(4 of .meter-row) .meter-fill { transition-delay: 210ms; }
+.card.reveal .bar-row:nth-child(5 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(5 of .meter-row) .meter-fill { transition-delay: 280ms; }
+.card.reveal .bar-row:nth-child(6 of .bar-row) .bar-fill, .card.reveal .meter-row:nth-child(6 of .meter-row) .meter-fill { transition-delay: 350ms; }
+
+/* Rows cascade in after their card, staggered — the "portfolio/dividends
+   coming in" look. Capped at ~10 explicit rows; longer lists just share the
+   last delay, which reads fine since they're also scrolling past. */
+.card.reveal .list-row, .card.reveal .news-row, .card.reveal .alert-row, .card.reveal tbody tr {
+  opacity: 0; transform: translateY(10px);
+  transition: opacity 420ms var(--ease-out-strong), transform 420ms var(--ease-out-strong);
+}
+.card.reveal.in-view .list-row, .card.reveal.in-view .news-row, .card.reveal.in-view .alert-row, .card.reveal.in-view tbody tr {
+  opacity: 1; transform: translateY(0);
+}
+.card.reveal .list-row:nth-child(1 of .list-row), .card.reveal .news-row:nth-child(1 of .news-row), .card.reveal .alert-row:nth-child(1 of .alert-row), .card.reveal tbody tr:nth-child(1) { transition-delay: 0ms; }
+.card.reveal .list-row:nth-child(2 of .list-row), .card.reveal .news-row:nth-child(2 of .news-row), .card.reveal .alert-row:nth-child(2 of .alert-row), .card.reveal tbody tr:nth-child(2) { transition-delay: 45ms; }
+.card.reveal .list-row:nth-child(3 of .list-row), .card.reveal .news-row:nth-child(3 of .news-row), .card.reveal .alert-row:nth-child(3 of .alert-row), .card.reveal tbody tr:nth-child(3) { transition-delay: 90ms; }
+.card.reveal .list-row:nth-child(4 of .list-row), .card.reveal .news-row:nth-child(4 of .news-row), .card.reveal .alert-row:nth-child(4 of .alert-row), .card.reveal tbody tr:nth-child(4) { transition-delay: 135ms; }
+.card.reveal .list-row:nth-child(5 of .list-row), .card.reveal .news-row:nth-child(5 of .news-row), .card.reveal .alert-row:nth-child(5 of .alert-row), .card.reveal tbody tr:nth-child(5) { transition-delay: 180ms; }
+.card.reveal .list-row:nth-child(6 of .list-row), .card.reveal .news-row:nth-child(6 of .news-row), .card.reveal .alert-row:nth-child(6 of .alert-row), .card.reveal tbody tr:nth-child(6) { transition-delay: 225ms; }
+.card.reveal .list-row:nth-child(7 of .list-row), .card.reveal .news-row:nth-child(7 of .news-row), .card.reveal .alert-row:nth-child(7 of .alert-row), .card.reveal tbody tr:nth-child(7) { transition-delay: 270ms; }
+.card.reveal .list-row:nth-child(n+8 of .list-row), .card.reveal .news-row:nth-child(n+8 of .news-row), .card.reveal .alert-row:nth-child(n+8 of .alert-row), .card.reveal tbody tr:nth-child(n+8) { transition-delay: 315ms; }
+
+/* SVG lines that draw themselves in (main trend chart + holdings sparklines).
+   JS measures the real path length and sets dasharray/offset (armPathDraw);
+   CSS only owns the transition that reveals it. */
+.path-draw { transition: stroke-dashoffset 700ms var(--ease-out-strong); }
+.path-draw.in-view { stroke-dashoffset: 0 !important; }
+.trend-fill.reveal-fade { opacity: 0; transition: opacity 400ms var(--ease-out-strong) 350ms; }
+.card.reveal.in-view .trend-fill.reveal-fade { opacity: 0.10; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .card.reveal { opacity: 1 !important; transform: none !important; transition: box-shadow 150ms ease !important; }
+  /* Reduced motion means fewer/gentler, not zero — keep a transform-free
+     shadow cue on hover rather than removing the affordance altogether. */
+  .card:hover { transform: none !important; box-shadow: var(--shadow-card-hover) !important; }
+  .card.reveal .bar-fill, .card.reveal .meter-fill,
+  .card.reveal .list-row, .card.reveal .news-row, .card.reveal .alert-row, .card.reveal tbody tr {
+    opacity: 1 !important; transform: none !important; transition: none !important;
+  }
+  .path-draw { stroke-dashoffset: 0 !important; transition: none !important; }
+  .trend-fill.reveal-fade { opacity: 0.10 !important; transition: none !important; }
+}
+
 .hero-figure .label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
 .hero-figure .value { font-size: 40px; font-weight: 700; line-height: 1.1; margin-top: 6px; letter-spacing: -0.015em; }
 .hero-figure .sub { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
